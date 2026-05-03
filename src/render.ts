@@ -9,7 +9,7 @@ export function render(state: UiState): string {
   const shaWidth = 7
   const branchWidth = state.branchColWidth
 
-  const indent = ' '.repeat(numWidth + shaWidth + branchWidth + 8)
+  const indent = ' '.repeat(2 * numWidth + shaWidth + branchWidth + 9)
 
   let commitIndex = state.scrollOffset
   let displayLine = 0
@@ -71,6 +71,8 @@ function renderFoldedCommit(
   termWidth: number,
 ): string {
   const lineNum = index + 1
+  const relNum = index === state.cursorIndex ? lineNum : Math.abs(index - state.cursorIndex)
+  const relStr = String(relNum).padStart(numWidth)
   const numStr = String(lineNum).padStart(numWidth)
   const sha = commit.shortSha.padEnd(shaWidth)
 
@@ -79,11 +81,11 @@ function renderFoldedCommit(
 
   const dot = state.unpushedShas.has(commit.shortSha) ? '\x1b[32m●\x1b[0m' : ' '
 
-  const overhead = numWidth + shaWidth + branchWidth + 8
+  const overhead = 2 * numWidth + shaWidth + branchWidth + 9
   const maxMsgLen = termWidth - overhead
   const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
 
-  const line = `${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
+  const line = `${relStr} ${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
 
   if (state.fileCursorIndex === null && index === state.cursorIndex) {
     return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`

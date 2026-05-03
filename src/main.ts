@@ -150,6 +150,18 @@ async function main() {
       return { type: 'yank' }
     }
 
+    if (byte === BYTE_j) {
+      const count = digitBuffer.length > 0 ? parseInt(digitBuffer, 10) : 1
+      digitBuffer = ''
+      return { type: 'move-rel', direction: 'down', count }
+    }
+
+    if (byte === BYTE_k) {
+      const count = digitBuffer.length > 0 ? parseInt(digitBuffer, 10) : 1
+      digitBuffer = ''
+      return { type: 'move-rel', direction: 'up', count }
+    }
+
     digitBuffer = ''
 
     if (byte === BYTE_l) {
@@ -175,10 +187,6 @@ async function main() {
     switch (byte) {
       case BYTE_i:
         return { type: 'inspect' }
-      case BYTE_j:
-        return { type: 'move-down' }
-      case BYTE_k:
-        return { type: 'move-up' }
       case BYTE_CTRL_F:
         return { type: 'page-down' }
       case BYTE_CTRL_B:

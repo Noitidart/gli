@@ -34,6 +34,7 @@ export type Action =
   | { type: 'toggle-mark' }
   | { type: 'undo-mark' }
   | { type: 'redo-mark' }
+  | { type: 'move-rel'; direction: 'down' | 'up'; count: number }
   | { type: 'yank' }
   | { type: 'yank-line'; line: number }
   | { type: 'inspect' }
@@ -105,6 +106,8 @@ export function reduce(state: UiState, action: Action): UiState {
       return undoMark(state)
     case 'redo-mark':
       return redoMark(state)
+    case 'move-rel':
+      return moveRel(state, action.direction, action.count)
     case 'yank':
       return state
     case 'yank-line':
@@ -467,5 +470,32 @@ function redoMark(state: UiState): UiState {
     selectionUndoStack: [...state.selectionUndoStack, lastAction],
     selectionRedoStack: newRedo,
     fileCursorIndex: lastAction.index,
+  }
+}
+
+function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiState {
+  let current = state
+
+  if (state.fileCursorIndex !== null) {
+    current = clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null })
+  } else {
+    current = { ...state, expandedIndex: null }
+  }
+
+  const delta = direction === 'down' ? count : -count
+  const newCursor = Math.max(0, Math.min(current.commits.length - 1, current.cursorIndex + delta))
+
+  let newOffset = current.scrollOffset
+
+  if (newCursor < current.scrollOffset) {
+    newOffset = newCursor
+  } else if (newCursor >= current.scrollOffset + current.termHeight) {
+    newOffset = newCursor - current.termHeight + 1
+  }
+
+  return {
+    ...current,
+    cursorIndex: newCursor,
+    scrollOffset: newOffset,
   }
 }
