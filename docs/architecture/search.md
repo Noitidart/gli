@@ -24,13 +24,73 @@ Started when a commit is already expanded. Searches the expanded commit's subjec
 
 Expanded search is cleared when collapsing or navigating away from the expanded commit.
 
-## Case Sensitivity
+## Body Search Flag (`/b`)
 
-Smart case by default: all-lowercase queries are case-insensitive; any uppercase letter makes it case-sensitive. Override with `\c` (force insensitive) or `\C` (force sensitive) anywhere in the query.
+The `b` flag extends list search to include commit bodies. It is independent of the `!` (search all) flag and combines with it freely.
 
-## Body Match Navigation (No-Man's Land)
+### Flag Combinations
 
-Expanded search can match body lines, which sit between the subject and file list — an area with no real cursor position. When the active match lands on a body line, only that body line shows the cursor highlight. The subject's normal cursor highlight is suppressed to avoid two highlighted lines.
+| Input | Scope | Body | Commits searched |
+|-------|-------|------|-----------------|
+| `/foo` | list | no | loaded only |
+| `/foo/b` | list | **yes** | loaded only (bodies must already be loaded) |
+| `/foo/!` | list | no | all (loads remaining commits) |
+| `/foo/!b` or `/foo/b!` | list | **yes** | all (loads remaining commits with bodies) |
+
+### How it works
+
+**List search with body** (`/b` flag): `computeListMatches` also searches each commit's `body` field. Commits where `body` is `null` (not yet lazy-loaded) are skipped. When `searchBody` is true, `bodyMatchIndices` tracks which matching commits have the match in their body (as opposed to subject/SHA/branch only).
+
+**Search all with body** (`/!b`): The batch loading loop uses `getCommitsWithBody` instead of `getCommits`. This uses format `%h%x1f%H%x1f%an%x1f%ad%x1f%s%x1f%b%x00` to include `%b` (body) in the same `git log` call. Bodies are parsed and stored on commit objects as they load. No extra git calls — same batch count, just more data per call.
+
+### Body Match Indicator
+
+When a commit has a body match, a yellow `▼` appears in a new column at the far left of the folded subject line. This column sits before the relative number column.
+
+Format (new column in brackets):
+```
+[▼] {relStr} {dot} {numStr}  {sha}  {branchStr}  {message}
+```
+
+- Yellow `▼` (`\x1b[33m▼\x1b[0m`) when the commit has a body match
+- Space otherwise
+
+The overhead calculation adds 2 to account for the indicator and its trailing space.
+
+### Body Match Navigation
+
+Body matches follow the same "don't skip the current commit" pattern as the list-search-while-expanded rules (see below). `n`/`N` never skip a body match on the current commit when it makes sense to stop on it.
+
+#### Auto-expand on landing
+
+When `n`/`N` navigates to a commit that has a body match:
+
+1. **Auto-expand** the commit
+2. **Compute expanded matches** for that commit (subject, body, files)
+3. **Navigate to the first relevant match**:
+   - If the subject also matches → land on subject line first; next `n` moves into body matches
+   - If only body matches → land directly on the first body match line
+4. Continue through all body matches within the expanded commit
+5. **Auto-fold** when all matches in this commit are exhausted and `n`/`N` moves to the next commit
+
+#### Re-expand when folded on body match
+
+If the user folds a body-expanded commit (via `h`) and then presses `n`/`N`, the commit re-expands to its body match instead of jumping to the next commit. This is because the current commit still has an unvisited body match — same principle as the list-search-while-expanded rule: don't skip what's under the cursor.
+
+The next `n`/`N` after re-expanding continues through the expanded matches. When all are exhausted, the commit folds and moves to the next matching commit.
+
+#### Expanded match cycle (fold-and-continue)
+
+When navigating expanded matches within an auto-expanded commit, pressing `n`/`N` checks whether the next match would wrap around:
+
+- **Would wrap** → auto-fold the current commit and resume list search from the next matching commit
+- **Would not wrap** → move to the next expanded match (body line, subject, or file)
+
+The wrap check is guarded by `activeIndex >= 0`. When `activeIndex` is -1 (cursor on subject, no expanded match active), the wrap check is skipped — `n`/`N` always resolves the next expanded match rather than prematurely folding.
+
+#### No-man's land
+
+Body lines sit between the subject and file list — an area with no real cursor position. When the active match lands on a body line, only that body line shows the cursor highlight. The subject's normal cursor highlight is suppressed to avoid two highlighted lines.
 
 From this state:
 - `k` moves the cursor to the subject (navigates the search match to the subject)
@@ -40,11 +100,34 @@ From this state:
 
 Once the cursor leaves the body line (via `j` or `k`), the body match drops from full reverse-video to partial inline highlight. Only one cursor line exists at any time.
 
+#### Example
+
+```
+User types: /fix/b
+Matches: commit 3 (body), commit 7 (subject), commit 12 (body + subject)
+
+n → Jump to commit 3, auto-expand, cursor on body match line
+n → Next body match in commit 3 (or fold + jump to commit 7 if only one)
+n → Auto-fold commit 3, jump to commit 7, expand, land on subject (no body match here)
+n → Auto-fold commit 7, jump to commit 12, expand, land on subject
+n → Move to body match in commit 12
+n → Auto-fold commit 12, wrap to commit 3...
+
+After h (fold) on commit 3:
+n → Re-expand commit 3, cursor on body match line (doesn't skip to commit 7)
+```
+
+## Case Sensitivity
+
+Smart case by default: all-lowercase queries are case-insensitive; any uppercase letter makes it case-sensitive. Override with `\c` (force insensitive) or `\C` (force sensitive) anywhere in the query.
+
 ## List Search While Expanded
 
 When a list search is active and the user expands a matching commit, then enters the file list, pressing `N` (going backward/upward) first lands on the expanded commit's subject match before continuing to the previous commit on the next press. This prevents skipping the current commit's visible subject highlight.
 
 Forward navigation (`n`) from the file list with a list search jumps directly to the next matching commit, collapsing the expansion.
+
+The body re-expand rule follows the same pattern: when the cursor is on a folded commit that has a body match, `n`/`N` re-expands it instead of jumping past — because the match under the cursor hasn't been visited yet.
 
 ## Status Bar
 

@@ -18,6 +18,8 @@ export type SearchState = {
   activeIndex: number
   highlightsVisible: boolean
   loadingAll: boolean
+  searchBody: boolean
+  bodyMatchIndices: Set<number>
 }
 
 export type UiState = {
@@ -133,6 +135,8 @@ function emptySearch(): SearchState {
     activeIndex: -1,
     highlightsVisible: true,
     loadingAll: false,
+    searchBody: false,
+    bodyMatchIndices: new Set(),
   }
 }
 
@@ -226,6 +230,7 @@ export function reduce(state: UiState, action: Action): UiState {
 function isInBodyMatch(state: UiState): boolean {
   const s = state.search
   if (s.scope !== 'expanded' || !s.highlightsVisible || s.query === null) return false
+  if (state.fileCursorIndex !== null) return false
   const match = s.expandedMatches[s.activeIndex]
   return match?.type === 'body'
 }
@@ -238,7 +243,7 @@ function moveDown(state: UiState): UiState {
       return { ...state, fileCursorIndex: 0 }
     }
 
-    return moveDown({ ...state, expandedIndex: null, search: clearSearch() })
+    return moveDown({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
   }
 
   if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
@@ -283,12 +288,29 @@ function moveUp(state: UiState): UiState {
         search: { ...s, activeIndex: subjectIdx, highlightsVisible: true },
       })
     }
-    return clearSelections({ ...state, fileCursorIndex: null })
+    return clearSelections({
+      ...state,
+      fileCursorIndex: null,
+      search: { ...s, activeIndex: -1 },
+    })
   }
 
   if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
     if (state.fileCursorIndex > 0) {
       return { ...state, fileCursorIndex: state.fileCursorIndex - 1 }
+    }
+
+    const s = state.search
+    const hasBodyMatch = s.scope === 'expanded'
+      && s.highlightsVisible
+      && s.expandedMatches.some(m => m.type === 'body')
+    if (hasBodyMatch) {
+      const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
+      return clearSelections({
+        ...state,
+        fileCursorIndex: null,
+        search: { ...s, activeIndex: subjectIdx !== -1 ? subjectIdx : -1 },
+      })
     }
 
     return clearSelections({ ...state, fileCursorIndex: null })
@@ -405,13 +427,42 @@ function jumpLine(state: UiState, line: number): UiState {
   })
 }
 
-function expand(state: UiState): UiState {
+function restoreBodySearchExpanded(state: UiState, commitIndex: number): UiState {
+  const s = state.search
+  if (!s.searchBody || !s.highlightsVisible || s.query === null) return state
+  if (!s.bodyMatchIndices.has(commitIndex)) return state
+
+  const commit = state.commits[commitIndex]
+  if (commit === undefined) return state
+
+  const { pattern, ignoreCase } = parseCaseFlags(s.query)
+  const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase)
+  if (expandedMatches.length === 0) return state
+
+  const subjectIdx = expandedMatches.findIndex(m => m.type === 'subject')
+  const activeIndex = subjectIdx !== -1 ? subjectIdx : -1
+
   return {
+    ...state,
+    fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, state.fileCursorIndex),
+    search: {
+      ...s,
+      scope: 'expanded',
+      expandedMatches,
+      activeIndex,
+    },
+  }
+}
+
+function expand(state: UiState): UiState {
+  const base: UiState = {
     ...clearSelections(state),
     expandedIndex: state.cursorIndex,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
   }
+
+  return restoreBodySearchExpanded(base, state.cursorIndex)
 }
 
 function fold(state: UiState): UiState {
@@ -432,12 +483,14 @@ function toggleExpand(state: UiState): UiState {
       search: preserveListSearch(state.search),
     }
   }
-  return {
+  const base: UiState = {
     ...clearSelections(state),
     expandedIndex: state.cursorIndex,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
   }
+
+  return restoreBodySearchExpanded(base, state.cursorIndex)
 }
 
 function resize(state: UiState, height: number, width: number): UiState {
@@ -479,16 +532,30 @@ function enterFileCursor(state: UiState): UiState {
   const commitToExpand = state.commits[state.cursorIndex]
   const alreadyLoaded = commitToExpand?.files != null && commitToExpand.files.length > 0
 
-  return {
+  const base: UiState = {
     ...state,
     expandedIndex: state.cursorIndex,
     fileCursorIndex: alreadyLoaded ? 0 : null,
     search: preserveListSearch(state.search),
   }
+
+  return restoreBodySearchExpanded(base, state.cursorIndex)
 }
 
 function exitFileCursor(state: UiState): UiState {
   if (state.fileCursorIndex !== null) {
+    const s = state.search
+    const hasBodyMatch = s.scope === 'expanded'
+      && s.highlightsVisible
+      && s.expandedMatches.some(m => m.type === 'body')
+    if (hasBodyMatch) {
+      const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
+      return clearSelections({
+        ...state,
+        fileCursorIndex: null,
+        search: { ...s, activeIndex: subjectIdx !== -1 ? subjectIdx : -1 },
+      })
+    }
     return clearSelections({ ...state, fileCursorIndex: null })
   }
   return clearSelections({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
@@ -567,7 +634,11 @@ function clearSearch(): SearchState {
 }
 
 function preserveListSearch(search: SearchState): SearchState {
-  return search.scope === 'list' ? search : clearSearch()
+  if (search.scope === 'list') return search
+  if (search.searchBody && search.listMatches.length > 0) {
+    return { ...search, scope: 'list', expandedMatches: [], activeIndex: -1 }
+  }
+  return clearSearch()
 }
 
 function toggleMark(state: UiState): UiState {
@@ -673,8 +744,12 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
       }
 
       if (direction === 'up' && state.fileCursorIndex <= 0) {
-        return clearSelections({ ...state, fileCursorIndex: null })
-      }
+    return clearSelections({
+      ...state,
+      fileCursorIndex: null,
+      search: { ...state.search, activeIndex: -1 },
+    })
+  }
     }
 
     return state
@@ -821,16 +896,20 @@ function findFlagDelimiter(query: string): { delimiter: string; index: number } 
   return null
 }
 
-export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean } {
+export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean; searchBody: boolean } {
   let ignoreCase: boolean | null = null
   let searchAll = false
+  let searchBody = false
   let searchPart = query
+
+  const validFlags = ['!', 'b', '!b', 'b!']
 
   const delim = findFlagDelimiter(query)
   if (delim !== null && delim.index > 0) {
     const flagPart = query.slice(delim.index + 1)
-    if (flagPart === '!') {
-      searchAll = true
+    if (validFlags.includes(flagPart)) {
+      searchAll = flagPart.includes('!')
+      searchBody = flagPart.includes('b')
       searchPart = query.slice(0, delim.index)
     }
   }
@@ -853,7 +932,7 @@ export function parseCaseFlags(query: string): { pattern: string; ignoreCase: bo
     ignoreCase = searchPart === searchPart.toLowerCase()
   }
 
-  return { pattern: searchPart, ignoreCase, searchAll }
+  return { pattern: searchPart, ignoreCase, searchAll, searchBody }
 }
 
 function matchesText(text: string, pattern: string, ignoreCase: boolean): boolean {
@@ -863,35 +942,54 @@ function matchesText(text: string, pattern: string, ignoreCase: boolean): boolea
   return text.includes(pattern)
 }
 
+type ListMatchResult = { matches: number[]; bodyMatchIndices: Set<number> }
+
 function computeListMatches(
   commits: Commit[],
   pattern: string,
   ignoreCase: boolean,
   branchTips: Map<string, string[]>,
-): number[] {
+  searchBody: boolean,
+): ListMatchResult {
   const result: number[] = []
+  const bodyMatchIndices = new Set<number>()
 
   for (let i = 0; i < commits.length; i++) {
     const commit = commits[i]
     if (commit === undefined) continue
 
-    if (matchesText(commit.shortSha, pattern, ignoreCase)) { result.push(i); continue }
-    if (matchesText(commit.fullSha, pattern, ignoreCase)) { result.push(i); continue }
-    if (matchesText(commit.message, pattern, ignoreCase)) { result.push(i); continue }
+    let headerMatch = false
 
-    const branches = branchTips.get(commit.shortSha)
-    if (branches !== undefined) {
-      for (let bi = 0; bi < branches.length; bi++) {
-        const branch = branches[bi]
-        if (branch !== undefined && matchesText(branch, pattern, ignoreCase)) {
-          result.push(i)
-          break
+    if (matchesText(commit.shortSha, pattern, ignoreCase)) { headerMatch = true }
+    else if (matchesText(commit.fullSha, pattern, ignoreCase)) { headerMatch = true }
+    else if (matchesText(commit.message, pattern, ignoreCase)) { headerMatch = true }
+    else {
+      const branches = branchTips.get(commit.shortSha)
+      if (branches !== undefined) {
+        for (let bi = 0; bi < branches.length; bi++) {
+          const branch = branches[bi]
+          if (branch !== undefined && matchesText(branch, pattern, ignoreCase)) {
+            headerMatch = true
+            break
+          }
         }
+      }
+    }
+
+    let bodyMatch = false
+    if (searchBody && commit.body !== null && matchesText(commit.body, pattern, ignoreCase)) {
+      bodyMatch = true
+    }
+
+    if (headerMatch || bodyMatch) {
+      result.push(i)
+      if (bodyMatch) {
+        bodyMatchIndices.add(i)
       }
     }
   }
 
-  return result
+  return { matches: result, bodyMatchIndices }
 }
 
 function computeExpandedMatches(
@@ -951,14 +1049,14 @@ function searchInput(state: UiState, char: string | null): UiState {
   }
 
   if (newPrompt === '') {
-    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [] } }
+    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [], bodyMatchIndices: new Set() } }
   }
 
-  const { pattern, ignoreCase } = parseCaseFlags(newPrompt)
+  const { pattern, ignoreCase, searchBody } = parseCaseFlags(newPrompt)
 
   if (state.search.scope === 'list') {
-    const listMatches = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips)
-    return { ...state, search: { ...state.search, prompt: newPrompt, listMatches } }
+    const { matches: listMatches, bodyMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, searchBody)
+    return { ...state, search: { ...state.search, prompt: newPrompt, searchBody, listMatches, bodyMatchIndices } }
   }
 
   if (state.expandedIndex !== null) {
@@ -972,6 +1070,47 @@ function searchInput(state: UiState, char: string | null): UiState {
   return { ...state, search: { ...state.search, prompt: newPrompt } }
 }
 
+function navigateToBodyMatch(
+  state: UiState,
+  targetIndex: number,
+  s: SearchState,
+  query: string,
+  searchBody: boolean,
+  pattern: string,
+  ignoreCase: boolean,
+): UiState {
+  const commit = state.commits[targetIndex]
+  if (commit === undefined) return state
+
+  const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
+    ? targetIndex
+    : state.scrollOffset
+
+  const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase)
+  const activeIndex = resolveExpandedStartIndex(expandedMatches, null, s.direction)
+
+  return {
+    ...state,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    expandedIndex: targetIndex,
+    fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, null),
+    search: {
+      ...s,
+      query,
+      searchBody,
+      scope: 'expanded',
+      expandedMatches,
+      activeIndex,
+      inputMode: false,
+      highlightsVisible: true,
+      loadingAll: false,
+    },
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
+  }
+}
+
 function searchConfirm(state: UiState): UiState {
   const s = state.search
 
@@ -979,7 +1118,7 @@ function searchConfirm(state: UiState): UiState {
     return { ...state, search: { ...emptySearch() } }
   }
 
-  const { searchAll } = parseCaseFlags(s.prompt)
+  const { searchAll, searchBody } = parseCaseFlags(s.prompt)
   const query = s.prompt
 
   if (s.scope === 'list' && searchAll && state.hasMore) {
@@ -988,6 +1127,7 @@ function searchConfirm(state: UiState): UiState {
       search: {
         ...s,
         query,
+        searchBody,
         inputMode: false,
         highlightsVisible: true,
         loadingAll: true,
@@ -995,7 +1135,7 @@ function searchConfirm(state: UiState): UiState {
     }
   }
 
-  const { pattern, ignoreCase } = parseCaseFlags(s.prompt)
+  const { pattern, ignoreCase } = parseCaseFlags(query)
 
   if (s.scope === 'list') {
     const matches = s.listMatches
@@ -1004,6 +1144,10 @@ function searchConfirm(state: UiState): UiState {
       const targetIndex = matches[activeIndex]
 
       if (targetIndex !== undefined) {
+        if (searchBody && s.bodyMatchIndices.has(targetIndex)) {
+          return navigateToBodyMatch(state, targetIndex, s, query, searchBody, pattern, ignoreCase)
+        }
+
         const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
           ? targetIndex
           : state.scrollOffset
@@ -1013,14 +1157,14 @@ function searchConfirm(state: UiState): UiState {
           cursorIndex: targetIndex,
           scrollOffset: newOffset,
           expandedIndex: null,
-          search: { ...s, query, inputMode: false, activeIndex, highlightsVisible: true },
+          search: { ...s, query, searchBody, inputMode: false, activeIndex, highlightsVisible: true },
           jumpStack: [...state.jumpStack, state.cursorIndex],
           jumpForwardStack: [],
         }
       }
     }
 
-    return { ...state, search: { ...s, query, inputMode: false, highlightsVisible: true, activeIndex: -1 } }
+    return { ...state, search: { ...s, query, searchBody, inputMode: false, highlightsVisible: true, activeIndex: -1 } }
   }
 
   const matches = s.expandedMatches
@@ -1029,12 +1173,12 @@ function searchConfirm(state: UiState): UiState {
 
     return {
       ...state,
-      search: { ...s, query, inputMode: false, activeIndex, highlightsVisible: true },
+      search: { ...s, query, searchBody, inputMode: false, activeIndex, highlightsVisible: true },
       fileCursorIndex: applyExpandedMatchFileCursor(matches, activeIndex, state.fileCursorIndex),
     }
   }
 
-  return { ...state, search: { ...s, query, inputMode: false, activeIndex: -1, highlightsVisible: true } }
+  return { ...state, search: { ...s, query, searchBody, inputMode: false, activeIndex: -1, highlightsVisible: true } }
 }
 
 function searchCancel(state: UiState): UiState {
@@ -1063,6 +1207,48 @@ function exitFileCursorIfSubjectMatch(
   }
 }
 
+function foldAndContinueSearch(
+  state: UiState,
+  s: SearchState,
+  pattern: string,
+  ignoreCase: boolean,
+  direction: 'forward' | 'backward',
+): UiState {
+  const foldedState: UiState = {
+    ...state,
+    expandedIndex: null,
+    fileCursorIndex: null,
+    search: { ...s, scope: 'list' },
+  }
+
+  const listResult = s.listMatches.length > 0
+    ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices }
+    : computeListMatches(foldedState.commits, pattern, ignoreCase, foldedState.branchTips, s.searchBody)
+
+  if (listResult.matches.length === 0) return foldedState
+
+  const activeIndex = resolveListActiveIndex(listResult.matches, foldedState.cursorIndex, direction)
+  const targetIndex = listResult.matches[activeIndex]
+  if (targetIndex === undefined) return foldedState
+
+  if (s.searchBody && listResult.bodyMatchIndices.has(targetIndex)) {
+    return navigateToBodyMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchBody, pattern, ignoreCase)
+  }
+
+  const newOffset = targetIndex < foldedState.scrollOffset || targetIndex >= foldedState.scrollOffset + foldedState.termHeight
+    ? targetIndex
+    : foldedState.scrollOffset
+
+  return {
+    ...foldedState,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    search: { ...foldedState.search, listMatches: listResult.matches, bodyMatchIndices: listResult.bodyMatchIndices, activeIndex, highlightsVisible: true },
+    jumpStack: [...foldedState.jumpStack, foldedState.cursorIndex],
+    jumpForwardStack: [],
+  }
+}
+
 function searchNext(state: UiState): UiState {
   const s = state.search
   if (s.query === null || s.inputMode) return state
@@ -1070,17 +1256,27 @@ function searchNext(state: UiState): UiState {
   const { pattern, ignoreCase } = parseCaseFlags(s.query)
 
   if (s.scope === 'list') {
-    const matches = s.listMatches.length > 0 ? s.listMatches : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips)
-    if (matches.length === 0) return state
+    const result = s.listMatches.length > 0
+      ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices }
+      : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody)
+    if (result.matches.length === 0) return state
 
     const goingUp = s.direction === 'backward'
-    const landed = exitFileCursorIfSubjectMatch(state, matches, goingUp)
+    const landed = exitFileCursorIfSubjectMatch(state, result.matches, goingUp)
     if (landed !== null) return landed
 
-    const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
-    const targetIndex = matches[activeIndex]
+    if (s.searchBody && state.expandedIndex === null && s.bodyMatchIndices.has(state.cursorIndex)) {
+      return navigateToBodyMatch(state, state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    }
+
+    const activeIndex = resolveListActiveIndex(result.matches, state.cursorIndex, s.direction)
+    const targetIndex = result.matches[activeIndex]
 
     if (targetIndex === undefined) return state
+
+    if (s.searchBody && result.bodyMatchIndices.has(targetIndex)) {
+      return navigateToBodyMatch(state, targetIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    }
 
     const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
       ? targetIndex
@@ -1092,7 +1288,7 @@ function searchNext(state: UiState): UiState {
       scrollOffset: newOffset,
       expandedIndex: null,
       fileCursorIndex: null,
-      search: { ...s, listMatches: matches, activeIndex, highlightsVisible: true },
+      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, activeIndex, highlightsVisible: true },
       jumpStack: [...state.jumpStack, state.cursorIndex],
       jumpForwardStack: [],
     }
@@ -1101,6 +1297,18 @@ function searchNext(state: UiState): UiState {
   if (s.scope === 'expanded') {
     const matches = s.expandedMatches
     if (matches.length === 0) return state
+
+    const isBodyAutoExpanded = s.searchBody && s.listMatches.length > 0
+
+    if (isBodyAutoExpanded && s.activeIndex >= 0) {
+      const wouldWrap = s.direction === 'forward'
+        ? s.activeIndex + 1 >= matches.length
+        : s.activeIndex - 1 < 0
+
+      if (wouldWrap) {
+        return foldAndContinueSearch(state, s, pattern, ignoreCase, s.direction)
+      }
+    }
 
     const nextIndex = resolveExpandedNextIndex(matches, s.activeIndex, s.direction)
     return {
@@ -1121,17 +1329,27 @@ function searchPrev(state: UiState): UiState {
   const reverseDir = s.direction === 'forward' ? 'backward' : 'forward'
 
   if (s.scope === 'list') {
-    const matches = s.listMatches.length > 0 ? s.listMatches : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips)
-    if (matches.length === 0) return state
+    const result = s.listMatches.length > 0
+      ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices }
+      : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody)
+    if (result.matches.length === 0) return state
 
     const goingUp = reverseDir === 'backward'
-    const landed = exitFileCursorIfSubjectMatch(state, matches, goingUp)
+    const landed = exitFileCursorIfSubjectMatch(state, result.matches, goingUp)
     if (landed !== null) return landed
 
-    const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, reverseDir)
-    const targetIndex = matches[activeIndex]
+    if (s.searchBody && state.expandedIndex === null && s.bodyMatchIndices.has(state.cursorIndex)) {
+      return navigateToBodyMatch(state, state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    }
+
+    const activeIndex = resolveListActiveIndex(result.matches, state.cursorIndex, reverseDir)
+    const targetIndex = result.matches[activeIndex]
 
     if (targetIndex === undefined) return state
+
+    if (s.searchBody && result.bodyMatchIndices.has(targetIndex)) {
+      return navigateToBodyMatch(state, targetIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    }
 
     const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
       ? targetIndex
@@ -1143,7 +1361,7 @@ function searchPrev(state: UiState): UiState {
       scrollOffset: newOffset,
       expandedIndex: null,
       fileCursorIndex: null,
-      search: { ...s, listMatches: matches, activeIndex, highlightsVisible: true },
+      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, activeIndex, highlightsVisible: true },
       jumpStack: [...state.jumpStack, state.cursorIndex],
       jumpForwardStack: [],
     }
@@ -1152,6 +1370,18 @@ function searchPrev(state: UiState): UiState {
   if (s.scope === 'expanded') {
     const matches = s.expandedMatches
     if (matches.length === 0) return state
+
+    const isBodyAutoExpanded = s.searchBody && s.listMatches.length > 0
+
+    if (isBodyAutoExpanded && s.activeIndex >= 0) {
+      const wouldWrap = reverseDir === 'forward'
+        ? s.activeIndex + 1 >= matches.length
+        : s.activeIndex - 1 < 0
+
+      if (wouldWrap) {
+        return foldAndContinueSearch(state, s, pattern, ignoreCase, reverseDir)
+      }
+    }
 
     const prevIndex = resolveExpandedNextIndex(matches, s.activeIndex, reverseDir)
     return {
@@ -1179,13 +1409,20 @@ function searchLoadComplete(state: UiState): UiState {
   if (s.query === null) return state
 
   const { pattern, ignoreCase } = parseCaseFlags(s.query)
-  const matches = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips)
+  const { matches, bodyMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody)
 
   if (matches.length > 0) {
     const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
     const targetIndex = matches[activeIndex]
 
     if (targetIndex !== undefined) {
+      if (s.searchBody && bodyMatchIndices.has(targetIndex)) {
+        return navigateToBodyMatch(
+          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, loadingAll: false } },
+          targetIndex, s, s.query, s.searchBody, pattern, ignoreCase,
+        )
+      }
+
       const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
         ? targetIndex
         : state.scrollOffset
@@ -1195,7 +1432,7 @@ function searchLoadComplete(state: UiState): UiState {
         cursorIndex: targetIndex,
         scrollOffset: newOffset,
         expandedIndex: null,
-        search: { ...s, listMatches: matches, activeIndex, highlightsVisible: true, loadingAll: false },
+        search: { ...s, listMatches: matches, bodyMatchIndices, activeIndex, highlightsVisible: true, loadingAll: false },
         jumpStack: [...state.jumpStack, state.cursorIndex],
         jumpForwardStack: [],
       }
@@ -1204,7 +1441,7 @@ function searchLoadComplete(state: UiState): UiState {
 
   return {
     ...state,
-    search: { ...s, listMatches: matches, activeIndex: -1, highlightsVisible: true, loadingAll: false },
+    search: { ...s, listMatches: matches, bodyMatchIndices, activeIndex: -1, highlightsVisible: true, loadingAll: false },
   }
 }
 

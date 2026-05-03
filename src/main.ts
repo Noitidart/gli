@@ -49,7 +49,7 @@ import {
 } from './keys.js'
 
 import { spawn } from 'node:child_process'
-import { getCommits, getTotalCount, getCommitDetail, getBranchTips, getUnpushedShas } from './git.js'
+import { getCommitsWithBody, getTotalCount, getCommitDetail, getBranchTips, getUnpushedShas } from './git.js'
 import { createInitialState, reduce, type Action } from './state.js'
 import { render, tickSpinner } from './render.js'
 import { copyToClipboard } from './clipboard.js'
@@ -80,7 +80,7 @@ async function main() {
   const pathspecs = parsePathspecs(process.argv)
 
   const totalCommits = await getTotalCount(pathspecs)
-  const initialCommits = await getCommits(0, 100, pathspecs)
+  const initialCommits = await getCommitsWithBody(0, 100, pathspecs)
   const hasMore = initialCommits.length >= 100
   const branchTips = await getBranchTips()
   const unpushedShas = await getUnpushedShas()
@@ -433,7 +433,7 @@ async function main() {
             setImmediate(async () => {
               try {
                 while (state.hasMore && !cancelLoadAll) {
-                  const newCommits = await getCommits(state.commits.length, 200, pathspecs)
+                  const newCommits = await getCommitsWithBody(state.commits.length, 200, pathspecs)
                   state = reduce(state, {
                     type: 'commits-loaded',
                     commits: newCommits,
@@ -564,7 +564,7 @@ async function main() {
       state = reduce(state, action)
       process.stdout.write(render(state))
 
-      if ((action.type === 'expand' || action.type === 'toggle-expand' || action.type === 'enter-file-cursor') && state.expandedIndex !== null) {
+      if ((action.type === 'expand' || action.type === 'toggle-expand' || action.type === 'enter-file-cursor' || action.type === 'search-next' || action.type === 'search-prev') && state.expandedIndex !== null) {
         const expandedCommit = state.commits[state.expandedIndex]
 
         if (expandedCommit !== undefined && (expandedCommit.body === null || expandedCommit.files === null)) {
@@ -600,7 +600,7 @@ async function main() {
         setImmediate(async () => {
           try {
             while (state.hasMore && !cancelMarkJump) {
-              const newCommits = await getCommits(state.commits.length, 100, pathspecs)
+              const newCommits = await getCommitsWithBody(state.commits.length, 100, pathspecs)
               state = reduce(state, {
                 type: 'commits-loaded',
                 commits: newCommits,
@@ -638,7 +638,7 @@ async function main() {
 
       setImmediate(async () => {
         try {
-          const newCommits = await getCommits(state.commits.length, 100, pathspecs)
+          const newCommits = await getCommitsWithBody(state.commits.length, 100, pathspecs)
           state = reduce(state, {
             type: 'commits-loaded',
             commits: newCommits,

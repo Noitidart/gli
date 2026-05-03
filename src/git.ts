@@ -59,10 +59,10 @@ export async function getTotalCount(pathspecs?: string[]): Promise<number> {
   }
 }
 
-export async function getCommits(skip: number, maxCount: number, pathspecs?: string[]): Promise<Commit[]> {
+export async function getCommitsWithBody(skip: number, maxCount: number, pathspecs?: string[]): Promise<Commit[]> {
   const args = [
     'log',
-    '--format=format:%h%x1f%H%x1f%an%x1f%ad%x1f%s%x00',
+    '--format=format:%h%x1f%H%x1f%an%x1f%ad%x1f%s%x1f%b%x00',
     '--date=short',
     `--skip=${skip}`,
     `--max-count=${maxCount}`,
@@ -84,18 +84,21 @@ export async function getCommits(skip: number, maxCount: number, pathspecs?: str
     }
 
     const cleaned = chunk.startsWith('\n') ? chunk.slice(1) : chunk
-    const fields = cleaned.split('\x1f')
-    if (fields.length < 5) {
+    const parts = cleaned.split('\x1f')
+    if (parts.length < 5) {
       continue
     }
 
+    const rawBody = parts.length > 5 ? parts.slice(5).join('\x1f').trimEnd() : ''
+    const body = rawBody.length > 0 ? rawBody : null
+
     commits.push({
-      shortSha: fields[0] ?? '',
-      fullSha: fields[1] ?? '',
-      author: fields[2] ?? '',
-      date: fields[3] ?? '',
-      message: fields[4] ?? '',
-      body: null,
+      shortSha: parts[0] ?? '',
+      fullSha: parts[1] ?? '',
+      author: parts[2] ?? '',
+      date: parts[3] ?? '',
+      message: parts[4] ?? '',
+      body,
       files: null,
     })
   }

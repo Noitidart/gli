@@ -24,7 +24,7 @@ export function render(state: UiState): string {
   const shaWidth = 7
   const branchWidth = state.branchColWidth
 
-  const indent = ' '.repeat(2 * numWidth + shaWidth + branchWidth + 9)
+  const indent = ' '.repeat(2 * numWidth + shaWidth + branchWidth + 11)
 
   let commitIndex = state.scrollOffset
   let displayLine = 0
@@ -80,7 +80,8 @@ export function render(state: UiState): string {
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.loadingAll) {
       const spinner = SPINNER_CHARS[spinnerFrame]
-      const progress = `${spinner} Searching all commits... ${state.commits.length}/${state.totalCommits}`
+      const label = state.search.searchBody ? 'Searching all commits (with body)...' : 'Searching all commits...'
+      const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.inputMode) {
       const prefix = state.search.direction === 'forward' ? '/' : '?'
@@ -166,29 +167,43 @@ function renderFoldedCommit(
   const branches = formatBranches(state.branchTips.get(commit.shortSha))
   const branchStr = branches.padEnd(branchWidth)
 
-  const dot = state.unpushedShas.has(commit.shortSha) ? '\x1b[32m●\x1b[0m' : ' '
-
-  const overhead = 2 * numWidth + shaWidth + branchWidth + 9
-  const maxMsgLen = termWidth - overhead
-  const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
-
-  const line = `${relStr} ${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
-
   const activeBodyMatch = state.search.scope === 'expanded'
     && state.search.highlightsVisible
     && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
+
+  const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch
+
+  const dot = state.unpushedShas.has(commit.shortSha)
+    ? (isCursorLine ? '●' : '\x1b[32m●\x1b[0m')
+    : ' '
+
+  const bodyInd = state.search.highlightsVisible
+    && state.search.query !== null
+    && state.search.bodyMatchIndices.has(index)
+    ? (isCursorLine ? '▼' : '\x1b[33m▼\x1b[0m')
+    : ' '
+
+  const overhead = 2 * numWidth + shaWidth + branchWidth + 11
+  const maxMsgLen = termWidth - overhead
+  const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
+
+  const line = `${bodyInd} ${relStr} ${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
 
   let highlightInfo: HighlightInfo | null = null
 
   if (state.search.highlightsVisible && state.search.query !== null) {
     if (state.search.scope === 'list') {
       highlightInfo = parseCaseFlags(state.search.query)
-    } else if (state.search.scope === 'expanded' && index === state.expandedIndex) {
-      highlightInfo = parseCaseFlags(state.search.query)
+    } else if (state.search.scope === 'expanded') {
+      if (index === state.expandedIndex) {
+        highlightInfo = parseCaseFlags(state.search.query)
+      } else if (state.search.searchBody && state.search.listMatches.length > 0) {
+        highlightInfo = parseCaseFlags(state.search.query)
+      }
     }
   }
 
-  if (state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch) {
+  if (isCursorLine) {
     const lineHighlighted = highlightReversed(line, highlightInfo)
     return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
   }
