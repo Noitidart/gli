@@ -51,7 +51,7 @@ import {
 import { spawn } from 'node:child_process'
 import { getCommits, getTotalCount, getCommitDetail, getBranchTips, getUnpushedShas } from './git.js'
 import { createInitialState, reduce, type Action } from './state.js'
-import { render } from './render.js'
+import { render, tickSpinner } from './render.js'
 import { copyToClipboard } from './clipboard.js'
 
 function parsePathspecs(argv: string[]): string[] | undefined {
@@ -80,13 +80,15 @@ async function main() {
   const pathspecs = parsePathspecs(process.argv)
 
   const totalCommits = await getTotalCount(pathspecs)
-  const initialCommits = await getCommits(0, 200, pathspecs)
-  const hasMore = initialCommits.length >= 200
+  const initialCommits = await getCommits(0, 100, pathspecs)
+  const hasMore = initialCommits.length >= 100
   const branchTips = await getBranchTips()
   const unpushedShas = await getUnpushedShas()
 
   let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width, branchTips, unpushedShas)
   let isLoadingMore = false
+  let cancelLoadAll = false
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null
 
   process.stdout.write(render(state))
 
@@ -371,6 +373,25 @@ async function main() {
       return
     }
 
+    if (state.search.loadingAll) {
+      for (let i = 0; i < data.length; i++) {
+        const byte = data[i]
+        if (byte === undefined) continue
+
+        if (byte === BYTE_ESCAPE) {
+          cancelLoadAll = true
+          return
+        }
+
+        if (byte === BYTE_CTRL_C) {
+          if (spinnerTimer !== null) clearInterval(spinnerTimer)
+          restoreTerminal()
+          process.exit(0)
+        }
+      }
+      return
+    }
+
     if (state.search.inputMode) {
       for (let i = 0; i < data.length; i++) {
         const byte = data[i]
@@ -385,6 +406,37 @@ async function main() {
         if (byte === BYTE_ENTER) {
           state = reduce(state, { type: 'search-confirm' })
           process.stdout.write(render(state))
+
+          if (state.search.loadingAll) {
+            cancelLoadAll = false
+            spinnerTimer = setInterval(() => {
+              tickSpinner()
+              process.stdout.write(render(state))
+            }, 80)
+
+            setImmediate(async () => {
+              try {
+                while (state.hasMore && !cancelLoadAll) {
+                  const newCommits = await getCommits(state.commits.length, 200, pathspecs)
+                  state = reduce(state, {
+                    type: 'commits-loaded',
+                    commits: newCommits,
+                    total: state.totalCommits,
+                    hasMore: newCommits.length >= 200,
+                  })
+                  process.stdout.write(render(state))
+                }
+              } catch {
+                // stop on error
+              }
+
+              if (spinnerTimer !== null) clearInterval(spinnerTimer)
+              spinnerTimer = null
+              state = reduce(state, { type: 'search-load-complete' })
+              process.stdout.write(render(state))
+            })
+          }
+
           return
         }
 
@@ -521,17 +573,17 @@ async function main() {
       }
     }
 
-    if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore) {
+    if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore && !state.search.loadingAll) {
       isLoadingMore = true
 
       setImmediate(async () => {
         try {
-          const newCommits = await getCommits(state.commits.length, 200, pathspecs)
+          const newCommits = await getCommits(state.commits.length, 100, pathspecs)
           state = reduce(state, {
             type: 'commits-loaded',
             commits: newCommits,
             total: state.totalCommits,
-            hasMore: newCommits.length >= 200,
+            hasMore: newCommits.length >= 100,
           })
         } catch {
           // Failed to load more — silently stop paginating

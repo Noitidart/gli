@@ -4,8 +4,15 @@ import type { Commit, FileStat } from './git.js'
 
 type HighlightInfo = { pattern: string; ignoreCase: boolean }
 
+const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+let spinnerFrame = 0
+
+export function tickSpinner(): void {
+  spinnerFrame = (spinnerFrame + 1) % SPINNER_CHARS.length
+}
+
 const hasActiveBar = (state: UiState): boolean =>
-  state.search.inputMode || (state.search.query !== null && state.search.highlightsVisible)
+  state.search.inputMode || state.search.loadingAll || (state.search.query !== null && state.search.highlightsVisible)
 
 export function render(state: UiState): string {
   const lines: string[] = []
@@ -67,7 +74,11 @@ export function render(state: UiState): string {
   }
 
   if (hasActiveBar(state)) {
-    if (state.search.inputMode) {
+    if (state.search.loadingAll) {
+      const spinner = SPINNER_CHARS[spinnerFrame]
+      const progress = `${spinner} Searching all commits... ${state.commits.length}/${state.totalCommits}`
+      lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
+    } else if (state.search.inputMode) {
       const prefix = state.search.direction === 'forward' ? '/' : '?'
       const promptLine = `${prefix}${state.search.prompt}`
       lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)

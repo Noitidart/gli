@@ -17,6 +17,7 @@ export type SearchState = {
   expandedMatches: ExpandedMatch[]
   activeIndex: number
   highlightsVisible: boolean
+  loadingAll: boolean
 }
 
 export type UiState = {
@@ -81,6 +82,7 @@ export type Action =
   | { type: 'search-next' }
   | { type: 'search-prev' }
   | { type: 'search-clear-highlights' }
+  | { type: 'search-load-complete' }
 
 export function createInitialState(
   commits: Commit[],
@@ -127,6 +129,7 @@ function emptySearch(): SearchState {
     expandedMatches: [],
     activeIndex: -1,
     highlightsVisible: true,
+    loadingAll: false,
   }
 }
 
@@ -210,6 +213,8 @@ export function reduce(state: UiState, action: Action): UiState {
       return searchPrev(state)
     case 'search-clear-highlights':
       return searchClearHighlights(state)
+    case 'search-load-complete':
+      return searchLoadComplete(state)
   }
 }
 
@@ -773,24 +778,38 @@ function jumpForward(state: UiState): UiState {
   })
 }
 
-export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean } {
+export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean } {
   let ignoreCase: boolean | null = null
-  let pattern = query
+  let searchAll = false
+  let searchPart = query
 
-  pattern = pattern.replace(/\\c/g, () => {
+  for (let i = query.length - 1; i >= 0; i--) {
+    if (query[i] === '/' && (i === 0 || query[i - 1] !== '\\')) {
+      const flagPart = query.slice(i + 1)
+      if (flagPart === '!') {
+        searchAll = true
+        searchPart = query.slice(0, i)
+      }
+      break
+    }
+  }
+
+  searchPart = searchPart.replace(/\\\//g, '/')
+
+  searchPart = searchPart.replace(/\\c/g, () => {
     ignoreCase = true
     return ''
   })
-  pattern = pattern.replace(/\\C/g, () => {
+  searchPart = searchPart.replace(/\\C/g, () => {
     ignoreCase = false
     return ''
   })
 
   if (ignoreCase === null) {
-    ignoreCase = pattern === pattern.toLowerCase()
+    ignoreCase = searchPart === searchPart.toLowerCase()
   }
 
-  return { pattern, ignoreCase }
+  return { pattern: searchPart, ignoreCase, searchAll }
 }
 
 function matchesText(text: string, pattern: string, ignoreCase: boolean): boolean {
@@ -916,8 +935,23 @@ function searchConfirm(state: UiState): UiState {
     return { ...state, search: { ...emptySearch() } }
   }
 
-  const { pattern, ignoreCase } = parseCaseFlags(s.prompt)
+  const { searchAll } = parseCaseFlags(s.prompt)
   const query = s.prompt
+
+  if (s.scope === 'list' && searchAll && state.hasMore) {
+    return {
+      ...state,
+      search: {
+        ...s,
+        query,
+        inputMode: false,
+        highlightsVisible: true,
+        loadingAll: true,
+      },
+    }
+  }
+
+  const { pattern, ignoreCase } = parseCaseFlags(s.prompt)
 
   if (s.scope === 'list') {
     const matches = s.listMatches
@@ -1092,6 +1126,41 @@ function searchClearHighlights(state: UiState): UiState {
   return {
     ...state,
     search: { ...state.search, highlightsVisible: false },
+  }
+}
+
+function searchLoadComplete(state: UiState): UiState {
+  const s = state.search
+
+  if (s.query === null) return state
+
+  const { pattern, ignoreCase } = parseCaseFlags(s.query)
+  const matches = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips)
+
+  if (matches.length > 0) {
+    const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
+    const targetIndex = matches[activeIndex]
+
+    if (targetIndex !== undefined) {
+      const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
+        ? targetIndex
+        : state.scrollOffset
+
+      return {
+        ...state,
+        cursorIndex: targetIndex,
+        scrollOffset: newOffset,
+        expandedIndex: null,
+        search: { ...s, listMatches: matches, activeIndex, highlightsVisible: true, loadingAll: false },
+        jumpStack: [...state.jumpStack, state.cursorIndex],
+        jumpForwardStack: [],
+      }
+    }
+  }
+
+  return {
+    ...state,
+    search: { ...s, listMatches: matches, activeIndex: -1, highlightsVisible: true, loadingAll: false },
   }
 }
 
