@@ -12,7 +12,7 @@ export function tickSpinner(): void {
 }
 
 const hasActiveBar = (state: UiState): boolean =>
-  state.search.inputMode || state.search.loadingAll || (state.search.query !== null && state.search.highlightsVisible)
+  state.search.inputMode || state.search.loadingAll || state.pendingMarkJump !== null || (state.search.query !== null && state.search.highlightsVisible)
 
 export function render(state: UiState): string {
   const lines: string[] = []
@@ -74,7 +74,11 @@ export function render(state: UiState): string {
   }
 
   if (hasActiveBar(state)) {
-    if (state.search.loadingAll) {
+    if (state.pendingMarkJump !== null) {
+      const spinner = SPINNER_CHARS[spinnerFrame]
+      const progress = `${spinner} Finding master... ${state.commits.length}/${state.totalCommits}`
+      lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
+    } else if (state.search.loadingAll) {
       const spinner = SPINNER_CHARS[spinnerFrame]
       const progress = `${spinner} Searching all commits... ${state.commits.length}/${state.totalCommits}`
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)

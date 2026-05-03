@@ -88,6 +88,7 @@ async function main() {
   let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width, branchTips, unpushedShas)
   let isLoadingMore = false
   let cancelLoadAll = false
+  let cancelMarkJump = false
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
 
   process.stdout.write(render(state))
@@ -167,10 +168,6 @@ async function main() {
 
       if (byte === BYTE_b) {
         return { type: 'jump-to-branch-next' }
-      }
-
-      if (byte === BYTE_m) {
-        return { type: 'jump-to-master' }
       }
 
       return null
@@ -392,6 +389,25 @@ async function main() {
       return
     }
 
+    if (state.pendingMarkJump !== null) {
+      for (let i = 0; i < data.length; i++) {
+        const byte = data[i]
+        if (byte === undefined) continue
+
+        if (byte === BYTE_ESCAPE) {
+          cancelMarkJump = true
+          return
+        }
+
+        if (byte === BYTE_CTRL_C) {
+          if (spinnerTimer !== null) clearInterval(spinnerTimer)
+          restoreTerminal()
+          process.exit(0)
+        }
+      }
+      return
+    }
+
     if (state.search.inputMode) {
       for (let i = 0; i < data.length; i++) {
         const byte = data[i]
@@ -571,9 +587,53 @@ async function main() {
           })
         }
       }
+
+      if (state.pendingMarkJump !== null) {
+        const targetSha = state.pendingMarkJump
+        cancelMarkJump = false
+
+        spinnerTimer = setInterval(() => {
+          tickSpinner()
+          process.stdout.write(render(state))
+        }, 80)
+
+        setImmediate(async () => {
+          try {
+            while (state.hasMore && !cancelMarkJump) {
+              const newCommits = await getCommits(state.commits.length, 100, pathspecs)
+              state = reduce(state, {
+                type: 'commits-loaded',
+                commits: newCommits,
+                total: state.totalCommits,
+                hasMore: newCommits.length >= 100,
+              })
+
+              if (state.commits.some((c) => c.shortSha === targetSha)) {
+                state = reduce(state, { type: 'resolve-pending-mark-jump' })
+                break
+              }
+
+              process.stdout.write(render(state))
+            }
+          } catch {
+            // stop on error
+          }
+
+          if (spinnerTimer !== null) clearInterval(spinnerTimer)
+          spinnerTimer = null
+
+          if (state.pendingMarkJump !== null) {
+            state = reduce(state, { type: 'cancel-pending-mark-jump' })
+          }
+
+          process.stdout.write(render(state))
+        })
+
+        return
+      }
     }
 
-    if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore && !state.search.loadingAll) {
+    if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore && !state.search.loadingAll && state.pendingMarkJump === null) {
       isLoadingMore = true
 
       setImmediate(async () => {

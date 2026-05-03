@@ -39,6 +39,7 @@ export type UiState = {
   marks: Record<string, string>
   jumpStack: number[]
   jumpForwardStack: number[]
+  pendingMarkJump: string | null
   search: SearchState
 }
 
@@ -74,7 +75,6 @@ export type Action =
   | { type: 'jump-forward' }
   | { type: 'jump-to-branch-next' }
   | { type: 'jump-to-branch-prev' }
-  | { type: 'jump-to-master' }
   | { type: 'search-start'; direction: 'forward' | 'backward' }
   | { type: 'search-input'; char: string | null }
   | { type: 'search-confirm' }
@@ -83,6 +83,8 @@ export type Action =
   | { type: 'search-prev' }
   | { type: 'search-clear-highlights' }
   | { type: 'search-load-complete' }
+  | { type: 'resolve-pending-mark-jump' }
+  | { type: 'cancel-pending-mark-jump' }
 
 export function createInitialState(
   commits: Commit[],
@@ -114,6 +116,7 @@ export function createInitialState(
     marks: {},
     jumpStack: [],
     jumpForwardStack: [],
+    pendingMarkJump: null,
     search: emptySearch(),
   }
 }
@@ -163,8 +166,6 @@ export function reduce(state: UiState, action: Action): UiState {
       return jumpToBranchNext(state)
     case 'jump-to-branch-prev':
       return jumpToBranchPrev(state)
-    case 'jump-to-master':
-      return jumpToMaster(state)
     case 'expand':
       return expand(state)
     case 'fold':
@@ -215,6 +216,10 @@ export function reduce(state: UiState, action: Action): UiState {
       return searchClearHighlights(state)
     case 'search-load-complete':
       return searchLoadComplete(state)
+    case 'resolve-pending-mark-jump':
+      return resolvePendingMarkJump(state)
+    case 'cancel-pending-mark-jump':
+      return cancelPendingMarkJump(state)
   }
 }
 
@@ -695,6 +700,7 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
 }
 
 function setMark(state: UiState, letter: string): UiState {
+  if (letter === 'm') return state
   if (state.fileCursorIndex !== null) return state
 
   const commit = state.commits[state.cursorIndex]
@@ -707,11 +713,35 @@ function setMark(state: UiState, letter: string): UiState {
 }
 
 function jumpToMark(state: UiState, letter: string): UiState {
+  if (letter === 'm') return jumpToMasterMark(state)
+
   const targetSha = state.marks[letter]
   if (targetSha === undefined) return state
 
   const targetIndex = state.commits.findIndex((c) => c.fullSha === targetSha)
   if (targetIndex === -1 || targetIndex === state.cursorIndex) return state
+
+  return applyJump(state, targetIndex)
+}
+
+function jumpToMasterMark(state: UiState): UiState {
+  let targetSha: string | null = null
+
+  for (const [sha, branches] of state.branchTips) {
+    if (branches.includes('master') || branches.includes('main')) {
+      targetSha = sha
+      break
+    }
+  }
+
+  if (targetSha === null) return state
+
+  const targetIndex = state.commits.findIndex((c) => c.shortSha === targetSha)
+  if (targetIndex === -1) {
+    return { ...state, pendingMarkJump: targetSha }
+  }
+
+  if (targetIndex === state.cursorIndex) return state
 
   return applyJump(state, targetIndex)
 }
@@ -1279,22 +1309,20 @@ function jumpToBranchPrev(state: UiState): UiState {
   return state
 }
 
-function jumpToMaster(state: UiState): UiState {
-  let targetSha: string | null = null
-
-  for (const [sha, branches] of state.branchTips) {
-    if (branches.includes('master') || branches.includes('main')) {
-      targetSha = sha
-      break
-    }
-  }
-
+function resolvePendingMarkJump(state: UiState): UiState {
+  const targetSha = state.pendingMarkJump
   if (targetSha === null) return state
 
   const targetIndex = state.commits.findIndex((c) => c.shortSha === targetSha)
-  if (targetIndex === -1 || targetIndex === state.cursorIndex) return state
+  if (targetIndex === -1) return { ...state, pendingMarkJump: null }
 
-  return applyJump(state, targetIndex)
+  return applyJump({ ...state, pendingMarkJump: null }, targetIndex)
+}
+
+function cancelPendingMarkJump(state: UiState): UiState {
+  if (state.pendingMarkJump === null) return state
+
+  return { ...state, pendingMarkJump: null }
 }
 
 function applyJump(state: UiState, targetIndex: number): UiState {
