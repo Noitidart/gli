@@ -773,7 +773,7 @@ function jumpForward(state: UiState): UiState {
   })
 }
 
-function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean } {
+export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean } {
   let ignoreCase: boolean | null = null
   let pattern = query
 

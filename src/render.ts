@@ -1,6 +1,8 @@
 import type { UiState } from './state.js'
-import { formatBranches } from './state.js'
+import { formatBranches, parseCaseFlags } from './state.js'
 import type { Commit, FileStat } from './git.js'
+
+type HighlightInfo = { pattern: string; ignoreCase: boolean }
 
 const hasActiveBar = (state: UiState): boolean =>
   state.search.inputMode || (state.search.query !== null && state.search.highlightsVisible)
@@ -85,47 +87,47 @@ export function render(state: UiState): string {
   return '\x1b[2J\x1b[H' + lines.join('\r\n')
 }
 
-function highlight(text: string, query: string | null): string {
-  if (query === null || query === '') return text
+function highlight(text: string, info: HighlightInfo | null): string {
+  if (info === null || info.pattern === '') return text
 
-  const lower = text.toLowerCase()
-  const lowerQuery = query.toLowerCase()
+  const searchIn = info.ignoreCase ? text.toLowerCase() : text
+  const searchFor = info.ignoreCase ? info.pattern.toLowerCase() : info.pattern
   let result = ''
   let pos = 0
 
   while (true) {
-    const idx = lower.indexOf(lowerQuery, pos)
+    const idx = searchIn.indexOf(searchFor, pos)
     if (idx === -1) {
       result += text.slice(pos)
       break
     }
 
     result += text.slice(pos, idx)
-    result += `\x1b[7m${text.slice(idx, idx + query.length)}\x1b[0m`
-    pos = idx + query.length
+    result += `\x1b[7m${text.slice(idx, idx + info.pattern.length)}\x1b[0m`
+    pos = idx + info.pattern.length
   }
 
   return result
 }
 
-function highlightReversed(text: string, query: string | null): string {
-  if (query === null || query === '') return text
+function highlightReversed(text: string, info: HighlightInfo | null): string {
+  if (info === null || info.pattern === '') return text
 
-  const lower = text.toLowerCase()
-  const lowerQuery = query.toLowerCase()
+  const searchIn = info.ignoreCase ? text.toLowerCase() : text
+  const searchFor = info.ignoreCase ? info.pattern.toLowerCase() : info.pattern
   let result = ''
   let pos = 0
 
   while (true) {
-    const idx = lower.indexOf(lowerQuery, pos)
+    const idx = searchIn.indexOf(searchFor, pos)
     if (idx === -1) {
       result += text.slice(pos)
       break
     }
 
     result += text.slice(pos, idx)
-    result += `\x1b[27m${text.slice(idx, idx + query.length)}\x1b[7m`
-    pos = idx + query.length
+    result += `\x1b[27m${text.slice(idx, idx + info.pattern.length)}\x1b[7m`
+    pos = idx + info.pattern.length
   }
 
   return result
@@ -161,22 +163,22 @@ function renderFoldedCommit(
     && state.search.highlightsVisible
     && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
 
-  let highlightQuery: string | null = null
+  let highlightInfo: HighlightInfo | null = null
 
   if (state.search.highlightsVisible && state.search.query !== null) {
     if (state.search.scope === 'list') {
-      highlightQuery = state.search.query
+      highlightInfo = parseCaseFlags(state.search.query)
     } else if (state.search.scope === 'expanded' && index === state.expandedIndex) {
-      highlightQuery = state.search.query
+      highlightInfo = parseCaseFlags(state.search.query)
     }
   }
 
   if (state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch) {
-    const lineHighlighted = highlightReversed(line, highlightQuery)
+    const lineHighlighted = highlightReversed(line, highlightInfo)
     return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
   }
 
-  return highlight(line, highlightQuery)
+  return highlight(line, highlightInfo)
 }
 
 function renderExpandedCommit(
@@ -198,10 +200,10 @@ function renderExpandedCommit(
 
   lines.push('')
 
-  const expandedHighlight = state.search.scope === 'expanded'
+  const expandedHighlight: HighlightInfo | null = state.search.scope === 'expanded'
     && state.search.highlightsVisible
     && state.search.query !== null
-    ? state.search.query
+    ? parseCaseFlags(state.search.query)
     : null
 
   if (commit.body === null) {
