@@ -9,6 +9,8 @@ export type UiState = {
   termWidth: number
   hasMore: boolean
   totalCommits: number
+  branchTips: Map<string, string[]>
+  branchColWidth: number
 }
 
 export type Action =
@@ -37,7 +39,10 @@ export function createInitialState(
   hasMore: boolean,
   termHeight: number,
   termWidth: number,
+  branchTips: Map<string, string[]>,
 ): UiState {
+  const branchColWidth = computeBranchColWidth(branchTips)
+
   return {
     commits,
     cursorIndex: 0,
@@ -47,6 +52,8 @@ export function createInitialState(
     termWidth,
     hasMore,
     totalCommits,
+    branchTips,
+    branchColWidth,
   }
 }
 
@@ -278,4 +285,24 @@ function clampScroll(
     return cursorIndex - termHeight + 1
   }
   return currentOffset
+}
+
+export function formatBranches(branches: string[] | undefined): string {
+  if (branches === undefined || branches.length === 0) {
+    return ''
+  }
+  return `<${branches.join(', ')}>`
+}
+
+function computeBranchColWidth(branchTips: Map<string, string[]>): number {
+  let maxWidth = 0
+
+  for (const branches of branchTips.values()) {
+    const text = formatBranches(branches)
+    if (text.length > maxWidth) {
+      maxWidth = text.length
+    }
+  }
+
+  return Math.max(1, maxWidth)
 }

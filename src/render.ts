@@ -1,4 +1,5 @@
 import type { UiState } from './state.js'
+import { formatBranches } from './state.js'
 import type { Commit, FileStat } from './git.js'
 
 export function render(state: UiState): string {
@@ -6,8 +7,9 @@ export function render(state: UiState): string {
   const maxLineNum = state.scrollOffset + state.termHeight
   const numWidth = Math.max(3, String(maxLineNum).length)
   const shaWidth = 7
+  const branchWidth = state.branchColWidth
 
-  const indent = ' '.repeat(numWidth + shaWidth + 4)
+  const indent = ' '.repeat(numWidth + shaWidth + branchWidth + 8)
 
   let commitIndex = state.scrollOffset
   let displayLine = 0
@@ -26,6 +28,7 @@ export function render(state: UiState): string {
         commitIndex,
         numWidth,
         shaWidth,
+        branchWidth,
         indent,
         state.termWidth,
       )
@@ -45,6 +48,7 @@ export function render(state: UiState): string {
         commitIndex,
         numWidth,
         shaWidth,
+        branchWidth,
         state.termWidth,
       )
       lines.push(line)
@@ -63,17 +67,21 @@ function renderFoldedCommit(
   index: number,
   numWidth: number,
   shaWidth: number,
+  branchWidth: number,
   termWidth: number,
 ): string {
   const lineNum = index + 1
   const numStr = String(lineNum).padStart(numWidth)
   const sha = commit.shortSha.padEnd(shaWidth)
 
-  const overhead = numWidth + shaWidth + 4
+  const branches = formatBranches(state.branchTips.get(commit.shortSha))
+  const branchStr = branches.padEnd(branchWidth)
+
+  const overhead = numWidth + shaWidth + branchWidth + 8
   const maxMsgLen = termWidth - overhead
   const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
 
-  const line = `${numStr}  ${sha}  ${message}`
+  const line = `${numStr}  ${sha}  ${branchStr}  ${message}`
 
   if (index === state.cursorIndex) {
     return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`
@@ -87,12 +95,13 @@ function renderExpandedCommit(
   index: number,
   numWidth: number,
   shaWidth: number,
+  branchWidth: number,
   indent: string,
   termWidth: number,
 ): string[] {
   const lines: string[] = []
 
-  lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, termWidth))
+  lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, branchWidth, termWidth))
 
   const authorLine = `${indent}Author: ${commit.author}    ${commit.date}`
   lines.push(truncate(authorLine, termWidth))

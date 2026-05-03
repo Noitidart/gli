@@ -93,6 +93,41 @@ export async function getCommits(skip: number, maxCount: number): Promise<Commit
   return commits
 }
 
+export async function getBranchTips(): Promise<Map<string, string[]>> {
+  const branchTips = new Map<string, string[]>()
+
+  try {
+    const output = await spawnGit(['for-each-ref', '--format=%(objectname:short) %(refname:short)', 'refs/heads'])
+
+    const lines = output.trim().split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line === undefined || line === '') {
+        continue
+      }
+
+      const spaceIdx = line.indexOf(' ')
+      if (spaceIdx === -1) {
+        continue
+      }
+
+      const sha = line.slice(0, spaceIdx)
+      const branch = line.slice(spaceIdx + 1)
+
+      const existing = branchTips.get(sha)
+      if (existing !== undefined) {
+        existing.push(branch)
+      } else {
+        branchTips.set(sha, [branch])
+      }
+    }
+  } catch {
+    // No branches or no repo — return empty map
+  }
+
+  return branchTips
+}
+
 export async function getCommitDetail(sha: string): Promise<{ body: string; files: FileStat[] }> {
   const [bodyOutput, statsOutput] = await Promise.all([
     spawnGit(['log', '-1', '--format=%b', sha]),

@@ -28,7 +28,7 @@ import {
 } from './keys.js'
 
 import { spawn } from 'node:child_process'
-import { getCommits, getTotalCount, getCommitDetail } from './git.js'
+import { getCommits, getTotalCount, getCommitDetail, getBranchTips } from './git.js'
 import { createInitialState, reduce, type Action } from './state.js'
 import { render } from './render.js'
 import { copyToClipboard } from './clipboard.js'
@@ -48,8 +48,9 @@ async function main() {
   const totalCommits = await getTotalCount()
   const initialCommits = await getCommits(0, 200)
   const hasMore = initialCommits.length >= 200
+  const branchTips = await getBranchTips()
 
-  let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width)
+  let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width, branchTips)
   let isLoadingMore = false
 
   process.stdout.write(render(state))
