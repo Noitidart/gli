@@ -33,6 +33,11 @@ import { render } from './render.js'
 import { copyToClipboard } from './clipboard.js'
 
 async function main() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error('gli requires a terminal')
+    process.exit(1)
+  }
+
   enterRawMode()
   enterAltScreen()
   hideCursor()
