@@ -478,12 +478,16 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
     const expandedCommit = state.commits[state.expandedIndex]
     const files = expandedCommit?.files
 
-    if (count === 1) {
-      if (direction === 'down') {
-        if (files != null && state.fileCursorIndex < files.length - 1) {
-          return { ...state, fileCursorIndex: state.fileCursorIndex + 1 }
-        }
+    if (files != null && files.length > 0) {
+      const delta = direction === 'down' ? count : -count
+      const lastIndex = files.length - 1
+      const newFileCursor = Math.max(0, Math.min(lastIndex, state.fileCursorIndex + delta))
 
+      if (newFileCursor !== state.fileCursorIndex) {
+        return { ...state, fileCursorIndex: newFileCursor }
+      }
+
+      if (direction === 'down' && state.fileCursorIndex >= lastIndex) {
         return moveRel(
           clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null }),
           'down',
@@ -491,18 +495,12 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
         )
       }
 
-      if (state.fileCursorIndex > 0) {
-        return { ...state, fileCursorIndex: state.fileCursorIndex - 1 }
+      if (direction === 'up' && state.fileCursorIndex <= 0) {
+        return clearSelections({ ...state, fileCursorIndex: null })
       }
-
-      return clearSelections({ ...state, fileCursorIndex: null })
     }
 
-    return moveRel(
-      clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null }),
-      direction,
-      count,
-    )
+    return state
   }
 
   const raw = { ...state, expandedIndex: null }
