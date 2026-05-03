@@ -77,11 +77,13 @@ function renderFoldedCommit(
   const branches = formatBranches(state.branchTips.get(commit.shortSha))
   const branchStr = branches.padEnd(branchWidth)
 
+  const dot = state.unpushedShas.has(commit.shortSha) ? '\x1b[32m●\x1b[0m' : ' '
+
   const overhead = numWidth + shaWidth + branchWidth + 8
   const maxMsgLen = termWidth - overhead
   const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
 
-  const line = `${numStr}  ${sha}  ${branchStr}  ${message}`
+  const line = `${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
 
   if (index === state.cursorIndex) {
     return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`

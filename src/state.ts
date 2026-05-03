@@ -11,6 +11,7 @@ export type UiState = {
   totalCommits: number
   branchTips: Map<string, string[]>
   branchColWidth: number
+  unpushedShas: Set<string>
 }
 
 export type Action =
@@ -40,6 +41,7 @@ export function createInitialState(
   termHeight: number,
   termWidth: number,
   branchTips: Map<string, string[]>,
+  unpushedShas: Set<string>,
 ): UiState {
   const branchColWidth = computeBranchColWidth(branchTips)
 
@@ -54,6 +56,7 @@ export function createInitialState(
     totalCommits,
     branchTips,
     branchColWidth,
+    unpushedShas,
   }
 }
 

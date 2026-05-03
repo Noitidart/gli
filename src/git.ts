@@ -93,6 +93,25 @@ export async function getCommits(skip: number, maxCount: number): Promise<Commit
   return commits
 }
 
+export async function getUnpushedShas(): Promise<Set<string>> {
+  const unpushed = new Set<string>()
+
+  try {
+    const output = await spawnGit(['log', '--format=%h', '@{upstream}..HEAD'])
+    const lines = output.trim().split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const sha = lines[i]
+      if (sha !== undefined && sha !== '') {
+        unpushed.add(sha)
+      }
+    }
+  } catch {
+    // No upstream branch — return empty set
+  }
+
+  return unpushed
+}
+
 export async function getBranchTips(): Promise<Map<string, string[]>> {
   const branchTips = new Map<string, string[]>()
 
