@@ -778,23 +778,37 @@ function jumpForward(state: UiState): UiState {
   })
 }
 
+const FLAG_DELIMITERS = ['/', '#', '_', '@', ',', ';', '-']
+
+function findFlagDelimiter(query: string): { delimiter: string; index: number } | null {
+  for (let i = query.length - 1; i >= 0; i--) {
+    const ch = query[i]
+    if (ch === undefined) continue
+    if (FLAG_DELIMITERS.includes(ch) && (i === 0 || query[i - 1] !== '\\')) {
+      return { delimiter: ch, index: i }
+    }
+  }
+  return null
+}
+
 export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean } {
   let ignoreCase: boolean | null = null
   let searchAll = false
   let searchPart = query
 
-  for (let i = query.length - 1; i >= 0; i--) {
-    if (query[i] === '/' && (i === 0 || query[i - 1] !== '\\')) {
-      const flagPart = query.slice(i + 1)
-      if (flagPart === '!') {
-        searchAll = true
-        searchPart = query.slice(0, i)
-      }
-      break
+  const delim = findFlagDelimiter(query)
+  if (delim !== null && delim.index > 0) {
+    const flagPart = query.slice(delim.index + 1)
+    if (flagPart === '!') {
+      searchAll = true
+      searchPart = query.slice(0, delim.index)
     }
   }
 
-  searchPart = searchPart.replace(/\\\//g, '/')
+  for (const d of FLAG_DELIMITERS) {
+    const escaped = '\\' + d
+    searchPart = searchPart.split(escaped).join(d)
+  }
 
   searchPart = searchPart.replace(/\\c/g, () => {
     ignoreCase = true
