@@ -16,6 +16,9 @@ export type UiState = {
   selectedFiles: Set<number>
   selectionUndoStack: { index: number }[]
   selectionRedoStack: { index: number }[]
+  marks: Record<string, string>
+  jumpStack: number[]
+  jumpForwardStack: number[]
 }
 
 export type Action =
@@ -43,6 +46,14 @@ export type Action =
   | { type: 'resize'; height: number; width: number }
   | { type: 'commits-loaded'; commits: Commit[]; total: number; hasMore: boolean }
   | { type: 'detail-loaded'; index: number; body: string; files: FileStat[] }
+  | { type: 'set-mark'; letter: string }
+  | { type: 'jump-to-mark'; letter: string }
+  | { type: 'jump-previous' }
+  | { type: 'jump-back' }
+  | { type: 'jump-forward' }
+  | { type: 'jump-to-branch-next' }
+  | { type: 'jump-to-branch-prev' }
+  | { type: 'jump-to-master' }
 
 export function createInitialState(
   commits: Commit[],
@@ -71,6 +82,9 @@ export function createInitialState(
     selectedFiles: new Set(),
     selectionUndoStack: [],
     selectionRedoStack: [],
+    marks: {},
+    jumpStack: [],
+    jumpForwardStack: [],
   }
 }
 
@@ -90,6 +104,22 @@ export function reduce(state: UiState, action: Action): UiState {
       return jumpBottom(state)
     case 'jump-line':
       return jumpLine(state, action.line)
+    case 'set-mark':
+      return setMark(state, action.letter)
+    case 'jump-to-mark':
+      return jumpToMark(state, action.letter)
+    case 'jump-previous':
+      return jumpPrevious(state)
+    case 'jump-back':
+      return jumpBack(state)
+    case 'jump-forward':
+      return jumpForward(state)
+    case 'jump-to-branch-next':
+      return jumpToBranchNext(state)
+    case 'jump-to-branch-prev':
+      return jumpToBranchPrev(state)
+    case 'jump-to-master':
+      return jumpToMaster(state)
     case 'expand':
       return expand(state)
     case 'fold':
@@ -225,17 +255,23 @@ function pageUp(state: UiState): UiState {
 }
 
 function jumpTop(state: UiState): UiState {
+  if (state.cursorIndex === 0) return state
+
   return clearSelections({
     ...state,
     cursorIndex: 0,
     scrollOffset: 0,
     expandedIndex: null,
     fileCursorIndex: null,
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
   })
 }
 
 function jumpBottom(state: UiState): UiState {
   const newCursor = state.commits.length - 1
+  if (state.cursorIndex === newCursor) return state
+
   const newOffset = Math.max(0, newCursor - state.termHeight + 1)
 
   return clearSelections({
@@ -244,19 +280,25 @@ function jumpBottom(state: UiState): UiState {
     scrollOffset: newOffset,
     expandedIndex: null,
     fileCursorIndex: null,
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
   })
 }
 
 function jumpLine(state: UiState, line: number): UiState {
-  const newCursor = Math.min(line - 1, state.commits.length - 1)
+  const newCursor = Math.max(0, Math.min(line - 1, state.commits.length - 1))
+  if (state.cursorIndex === newCursor) return state
+
   const newOffset = Math.max(0, newCursor - Math.floor(state.termHeight / 2))
 
   return clearSelections({
     ...state,
-    cursorIndex: Math.max(0, newCursor),
+    cursorIndex: newCursor,
     scrollOffset: newOffset,
     expandedIndex: null,
     fileCursorIndex: null,
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
   })
 }
 
@@ -526,4 +568,137 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
     cursorIndex: newCursor,
     scrollOffset: newOffset,
   }
+}
+
+function setMark(state: UiState, letter: string): UiState {
+  if (state.fileCursorIndex !== null) return state
+
+  const commit = state.commits[state.cursorIndex]
+  if (commit === undefined) return state
+
+  return {
+    ...state,
+    marks: { ...state.marks, [letter]: commit.fullSha },
+  }
+}
+
+function jumpToMark(state: UiState, letter: string): UiState {
+  const targetSha = state.marks[letter]
+  if (targetSha === undefined) return state
+
+  const targetIndex = state.commits.findIndex((c) => c.fullSha === targetSha)
+  if (targetIndex === -1 || targetIndex === state.cursorIndex) return state
+
+  return applyJump(state, targetIndex)
+}
+
+function jumpPrevious(state: UiState): UiState {
+  if (state.jumpStack.length === 0) return state
+
+  const newStack = [...state.jumpStack]
+  const targetIndex = newStack.pop()
+  if (targetIndex === undefined || targetIndex === state.cursorIndex) return state
+
+  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+
+  return clearSelections({
+    ...state,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    expandedIndex: null,
+    fileCursorIndex: null,
+    jumpStack: [...newStack, state.cursorIndex],
+  })
+}
+
+function jumpBack(state: UiState): UiState {
+  if (state.jumpStack.length === 0) return state
+
+  const newStack = [...state.jumpStack]
+  const targetIndex = newStack.pop()
+  if (targetIndex === undefined) return state
+
+  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+
+  return clearSelections({
+    ...state,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    expandedIndex: null,
+    fileCursorIndex: null,
+    jumpStack: newStack,
+    jumpForwardStack: [...state.jumpForwardStack, state.cursorIndex],
+  })
+}
+
+function jumpForward(state: UiState): UiState {
+  if (state.jumpForwardStack.length === 0) return state
+
+  const newForward = [...state.jumpForwardStack]
+  const targetIndex = newForward.pop()
+  if (targetIndex === undefined) return state
+
+  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+
+  return clearSelections({
+    ...state,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    expandedIndex: null,
+    fileCursorIndex: null,
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: newForward,
+  })
+}
+
+function jumpToBranchNext(state: UiState): UiState {
+  for (let i = state.cursorIndex + 1; i < state.commits.length; i++) {
+    const commit = state.commits[i]
+    if (commit !== undefined && state.branchTips.has(commit.shortSha)) {
+      return applyJump(state, i)
+    }
+  }
+  return state
+}
+
+function jumpToBranchPrev(state: UiState): UiState {
+  for (let i = state.cursorIndex - 1; i >= 0; i--) {
+    const commit = state.commits[i]
+    if (commit !== undefined && state.branchTips.has(commit.shortSha)) {
+      return applyJump(state, i)
+    }
+  }
+  return state
+}
+
+function jumpToMaster(state: UiState): UiState {
+  let targetSha: string | null = null
+
+  for (const [sha, branches] of state.branchTips) {
+    if (branches.includes('master') || branches.includes('main')) {
+      targetSha = sha
+      break
+    }
+  }
+
+  if (targetSha === null) return state
+
+  const targetIndex = state.commits.findIndex((c) => c.shortSha === targetSha)
+  if (targetIndex === -1 || targetIndex === state.cursorIndex) return state
+
+  return applyJump(state, targetIndex)
+}
+
+function applyJump(state: UiState, targetIndex: number): UiState {
+  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+
+  return clearSelections({
+    ...state,
+    cursorIndex: targetIndex,
+    scrollOffset: newOffset,
+    expandedIndex: null,
+    fileCursorIndex: null,
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
+  })
 }

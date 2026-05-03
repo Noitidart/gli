@@ -9,9 +9,12 @@ import {
 
 import {
   BYTE_a,
+  BYTE_b,
+  BYTE_c,
   BYTE_CTRL_B,
   BYTE_CTRL_C,
   BYTE_CTRL_F,
+  BYTE_CTRL_O,
   BYTE_CTRL_R,
   BYTE_ESCAPE,
   BYTE_G,
@@ -21,15 +24,20 @@ import {
   BYTE_j,
   BYTE_k,
   BYTE_l,
+  BYTE_LEFT_BRACKET,
+  BYTE_m,
   BYTE_o,
-  BYTE_c,
   BYTE_q,
+  BYTE_QUOTE,
+  BYTE_RIGHT_BRACKET,
   BYTE_SPACE,
+  BYTE_TAB,
   BYTE_u,
   BYTE_y,
   BYTE_z,
-  isDigit,
   digitValue,
+  isDigit,
+  isLowerAlpha,
 } from './keys.js'
 
 import { spawn } from 'node:child_process'
@@ -77,7 +85,15 @@ async function main() {
   let digitBuffer = ''
   let pendingG = false
   let pendingZ = false
+  let pendingQuote = false
+  let pendingM = false
+  let pendingRBracket = false
+  let pendingLBracket = false
   let gTimer: ReturnType<typeof setTimeout> | null = null
+  let quoteTimer: ReturnType<typeof setTimeout> | null = null
+  let mTimer: ReturnType<typeof setTimeout> | null = null
+  let rbracketTimer: ReturnType<typeof setTimeout> | null = null
+  let lbracketTimer: ReturnType<typeof setTimeout> | null = null
 
   function parseNextByte(byte: number): Action | null {
     if (pendingG) {
@@ -106,6 +122,62 @@ async function main() {
       }
     }
 
+    if (pendingQuote) {
+      clearTimeout(quoteTimer as ReturnType<typeof setTimeout>)
+      pendingQuote = false
+      quoteTimer = null
+
+      if (byte === BYTE_QUOTE) {
+        return { type: 'jump-previous' }
+      }
+
+      if (isLowerAlpha(byte)) {
+        return { type: 'jump-to-mark', letter: String.fromCharCode(byte) }
+      }
+
+      return null
+    }
+
+    if (pendingM) {
+      clearTimeout(mTimer as ReturnType<typeof setTimeout>)
+      pendingM = false
+      mTimer = null
+
+      if (isLowerAlpha(byte)) {
+        return { type: 'set-mark', letter: String.fromCharCode(byte) }
+      }
+
+      return null
+    }
+
+    if (pendingRBracket) {
+      clearTimeout(rbracketTimer as ReturnType<typeof setTimeout>)
+      pendingRBracket = false
+      rbracketTimer = null
+
+      if (byte === BYTE_b) {
+        return { type: 'jump-to-branch-next' }
+      }
+
+      if (byte === BYTE_m) {
+        return { type: 'jump-to-master' }
+      }
+
+      return null
+    }
+
+    if (pendingLBracket) {
+      clearTimeout(lbracketTimer as ReturnType<typeof setTimeout>)
+      pendingLBracket = false
+      lbracketTimer = null
+
+      if (byte === BYTE_b) {
+        return { type: 'jump-to-branch-prev' }
+      }
+
+      return null
+    }
+
     if (isDigit(byte)) {
       digitBuffer += String(digitValue(byte))
       return null
@@ -128,6 +200,68 @@ async function main() {
         pendingG = false
         gTimer = null
       }
+
+      return null
+    }
+
+    if (byte === BYTE_QUOTE) {
+      pendingQuote = true
+      digitBuffer = ''
+
+      quoteTimer = setTimeout(() => {
+        pendingQuote = false
+      }, 500)
+
+      return null
+    }
+
+    if (byte === BYTE_m) {
+      pendingM = true
+      digitBuffer = ''
+
+      if (pendingG) {
+        clearTimeout(gTimer as ReturnType<typeof setTimeout>)
+        pendingG = false
+        gTimer = null
+      }
+
+      mTimer = setTimeout(() => {
+        pendingM = false
+      }, 500)
+
+      return null
+    }
+
+    if (byte === BYTE_RIGHT_BRACKET) {
+      pendingRBracket = true
+      digitBuffer = ''
+
+      if (pendingG) {
+        clearTimeout(gTimer as ReturnType<typeof setTimeout>)
+        pendingG = false
+        gTimer = null
+      }
+
+      rbracketTimer = setTimeout(() => {
+        pendingRBracket = false
+      }, 500)
+
+      return null
+    }
+
+    if (byte === BYTE_LEFT_BRACKET) {
+      pendingLBracket = true
+      digitBuffer = ''
+
+      if (pendingG) {
+        clearTimeout(gTimer as ReturnType<typeof setTimeout>)
+        pendingG = false
+        gTimer = null
+      }
+
+      lbracketTimer = setTimeout(() => {
+        pendingLBracket = false
+      }, 500)
 
       return null
     }
@@ -197,6 +331,10 @@ async function main() {
         return { type: 'quit' }
       case BYTE_CTRL_C:
         return { type: 'hard-quit' }
+      case BYTE_CTRL_O:
+        return { type: 'jump-back' }
+      case BYTE_TAB:
+        return { type: 'jump-forward' }
       default:
         return null
     }

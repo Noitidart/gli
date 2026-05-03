@@ -19,6 +19,13 @@ export const BYTE_y = 0x79
 export const BYTE_z = 0x7a
 export const BYTE_u = 0x75
 export const BYTE_a = 0x61
+export const BYTE_m = 0x6d
+export const BYTE_QUOTE = 0x27
+export const BYTE_RIGHT_BRACKET = 0x5d
+export const BYTE_LEFT_BRACKET = 0x5b
+export const BYTE_CTRL_O = 0x0f
+export const BYTE_TAB = 0x09
+export const BYTE_b = 0x62
 
 const DIGIT_0 = 0x30
 const DIGIT_9 = 0x39
@@ -29,4 +36,10 @@ export function isDigit(byte: number): boolean {
 
 export function digitValue(byte: number): number {
   return byte - DIGIT_0
+}
+
+const LOWER_a = 0x61
+const LOWER_z = 0x7a
+export function isLowerAlpha(byte: number): boolean {
+  return byte >= LOWER_a && byte <= LOWER_z
 }
