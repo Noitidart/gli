@@ -326,7 +326,10 @@ function enterFileCursor(state: UiState): UiState {
 }
 
 function exitFileCursor(state: UiState): UiState {
-  return clearSelections({ ...state, fileCursorIndex: null })
+  if (state.fileCursorIndex !== null) {
+    return clearSelections({ ...state, fileCursorIndex: null })
+  }
+  return clearSelections({ ...state, expandedIndex: null })
 }
 
 function commitsLoaded(
