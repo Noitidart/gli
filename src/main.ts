@@ -246,11 +246,12 @@ async function main() {
       state = reduce(state, action)
       process.stdout.write(render(state))
 
-      if ((action.type === 'expand' || action.type === 'toggle-expand') && state.expandedIndex !== null) {
+      if ((action.type === 'expand' || action.type === 'toggle-expand' || action.type === 'enter-file-cursor') && state.expandedIndex !== null) {
         const expandedCommit = state.commits[state.expandedIndex]
 
         if (expandedCommit !== undefined && (expandedCommit.body === null || expandedCommit.files === null)) {
           const fetchIndex = state.expandedIndex
+          const wasEnterFileCursor = action.type === 'enter-file-cursor'
 
           getCommitDetail(expandedCommit.fullSha).then((detail) => {
             state = reduce(state, {
@@ -259,6 +260,11 @@ async function main() {
               body: detail.body,
               files: detail.files,
             })
+
+            if (wasEnterFileCursor && state.expandedIndex === fetchIndex) {
+              state = { ...state, fileCursorIndex: 0 }
+            }
+
             process.stdout.write(render(state))
           })
         }

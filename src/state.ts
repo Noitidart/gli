@@ -289,18 +289,22 @@ function resize(state: UiState, height: number, width: number): UiState {
 }
 
 function enterFileCursor(state: UiState): UiState {
-  if (state.expandedIndex === null) {
+  if (state.expandedIndex === state.cursorIndex) {
+    const expandedCommit = state.commits[state.expandedIndex]
+    const files = expandedCommit?.files
+
+    if (files != null && files.length > 0) {
+      return { ...state, fileCursorIndex: 0 }
+    }
+
     return state
   }
 
-  const expandedCommit = state.commits[state.expandedIndex]
-  const files = expandedCommit?.files
-
-  if (files != null && files.length > 0) {
-    return { ...state, fileCursorIndex: 0 }
+  return {
+    ...state,
+    expandedIndex: state.cursorIndex,
+    fileCursorIndex: null,
   }
-
-  return state
 }
 
 function exitFileCursor(state: UiState): UiState {
