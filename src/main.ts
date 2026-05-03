@@ -221,9 +221,14 @@ async function main() {
             }
           }
 
+          const childEnv = { ...process.env } as Record<string, string>
+          const currentLess = childEnv['LESS'] ?? '-R'
+          childEnv['LESS'] = currentLess.replace(/-F\b|--quit-if-one-screen\b/g, '').trim().replace(/\s+/, ' ')
+
           const child = spawn('git', args, {
             stdio: 'inherit',
             cwd: process.cwd(),
+            env: childEnv,
           })
 
           child.on('close', () => {
