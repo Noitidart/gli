@@ -1,6 +1,7 @@
 import {
   enterRawMode,
   enterAltScreen,
+  exitAltScreen,
   hideCursor,
   restoreTerminal,
   getTermSize,
@@ -13,19 +14,23 @@ import {
   BYTE_ESCAPE,
   BYTE_G,
   BYTE_g,
+  BYTE_i,
   BYTE_j,
   BYTE_k,
   BYTE_o,
   BYTE_c,
   BYTE_q,
+  BYTE_y,
   BYTE_z,
   isDigit,
   digitValue,
 } from './keys.js'
 
+import { spawn } from 'node:child_process'
 import { getCommits, getTotalCount, getCommitDetail } from './git.js'
 import { createInitialState, reduce, type Action } from './state.js'
 import { render } from './render.js'
+import { copyToClipboard } from './clipboard.js'
 
 async function main() {
   enterRawMode()
@@ -108,9 +113,20 @@ async function main() {
       return { type: 'jump-bottom' }
     }
 
+    if (byte === BYTE_y) {
+      if (digitBuffer.length > 0) {
+        const line = parseInt(digitBuffer, 10)
+        digitBuffer = ''
+        return { type: 'yank-line', line }
+      }
+      return { type: 'yank' }
+    }
+
     digitBuffer = ''
 
     switch (byte) {
+      case BYTE_i:
+        return { type: 'inspect' }
       case BYTE_j:
         return { type: 'move-down' }
       case BYTE_k:
@@ -149,6 +165,48 @@ async function main() {
       if (action.type === 'quit' || action.type === 'hard-quit') {
         restoreTerminal()
         process.exit(0)
+      }
+
+      if (action.type === 'yank' || action.type === 'yank-line') {
+        const commitIndex = action.type === 'yank-line'
+          ? Math.min(action.line - 1, state.commits.length - 1)
+          : state.cursorIndex
+        const commit = state.commits[commitIndex]
+
+        if (commit !== undefined) {
+          copyToClipboard(commit.shortSha).catch(() => {})
+        }
+
+        restoreTerminal()
+        process.exit(0)
+      }
+
+      if (action.type === 'inspect') {
+        const commit = state.commits[state.cursorIndex]
+
+        if (commit !== undefined) {
+          process.stdin.pause()
+          exitAltScreen()
+
+          const child = spawn('git', [
+            '-c', 'diff.external=difft',
+            'show', '--ext-diff',
+            commit.fullSha,
+          ], {
+            stdio: 'inherit',
+            cwd: process.cwd(),
+          })
+
+          child.on('close', () => {
+            enterRawMode()
+            enterAltScreen()
+            hideCursor()
+            process.stdin.resume()
+            process.stdout.write(render(state))
+          })
+        }
+
+        return
       }
 
       state = reduce(state, action)
