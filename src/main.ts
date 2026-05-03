@@ -8,6 +8,7 @@ import {
 } from './terminal.js'
 
 import {
+  BYTE_a,
   BYTE_CTRL_B,
   BYTE_CTRL_C,
   BYTE_CTRL_F,
@@ -78,6 +79,8 @@ async function main() {
           return { type: 'expand' }
         case BYTE_c:
           return { type: 'fold' }
+        case BYTE_a:
+          return { type: 'toggle-expand' }
         default:
           return null
       }
@@ -217,7 +220,7 @@ async function main() {
       state = reduce(state, action)
       process.stdout.write(render(state))
 
-      if (action.type === 'expand' && state.expandedIndex !== null) {
+      if ((action.type === 'expand' || action.type === 'toggle-expand') && state.expandedIndex !== null) {
         const expandedCommit = state.commits[state.expandedIndex]
 
         if (expandedCommit !== undefined && (expandedCommit.body === null || expandedCommit.files === null)) {

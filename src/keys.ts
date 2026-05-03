@@ -14,6 +14,7 @@ export const BYTE_o = 0x6f
 export const BYTE_q = 0x71
 export const BYTE_y = 0x79
 export const BYTE_z = 0x7a
+export const BYTE_a = 0x61
 
 const DIGIT_0 = 0x30
 const DIGIT_9 = 0x39

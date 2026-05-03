@@ -21,6 +21,7 @@ export type Action =
   | { type: 'jump-line'; line: number }
   | { type: 'expand' }
   | { type: 'fold' }
+  | { type: 'toggle-expand' }
   | { type: 'yank' }
   | { type: 'yank-line'; line: number }
   | { type: 'inspect' }
@@ -69,6 +70,8 @@ export function reduce(state: UiState, action: Action): UiState {
       return expand(state)
     case 'fold':
       return fold(state)
+    case 'toggle-expand':
+      return toggleExpand(state)
     case 'yank':
       return state
     case 'yank-line':
@@ -202,6 +205,19 @@ function fold(state: UiState): UiState {
   return {
     ...state,
     expandedIndex: null,
+  }
+}
+
+function toggleExpand(state: UiState): UiState {
+  if (state.expandedIndex === state.cursorIndex) {
+    return {
+      ...state,
+      expandedIndex: null,
+    }
+  }
+  return {
+    ...state,
+    expandedIndex: state.cursorIndex,
   }
 }
 
