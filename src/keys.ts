@@ -1,10 +1,15 @@
 export const BYTE_CTRL_B = 0x02
 export const BYTE_CTRL_C = 0x03
 export const BYTE_CTRL_F = 0x06
+export const BYTE_CTRL_L = 0x0c
 export const BYTE_CTRL_R = 0x12
 export const BYTE_ENTER = 0x0d
 export const BYTE_ESCAPE = 0x1b
 export const BYTE_SPACE = 0x20
+export const BYTE_SLASH = 0x2f
+export const BYTE_QUESTION = 0x3f
+export const BYTE_N = 0x4e
+export const BYTE_BACKSPACE = 0x7f
 export const BYTE_c = 0x63
 export const BYTE_g = 0x67
 export const BYTE_G = 0x47
@@ -20,6 +25,7 @@ export const BYTE_z = 0x7a
 export const BYTE_u = 0x75
 export const BYTE_a = 0x61
 export const BYTE_m = 0x6d
+export const BYTE_n = 0x6e
 export const BYTE_QUOTE = 0x27
 export const BYTE_RIGHT_BRACKET = 0x5d
 export const BYTE_LEFT_BRACKET = 0x5b
@@ -42,4 +48,8 @@ const LOWER_a = 0x61
 const LOWER_z = 0x7a
 export function isLowerAlpha(byte: number): boolean {
   return byte >= LOWER_a && byte <= LOWER_z
+}
+
+export function isPrintable(byte: number): boolean {
+  return byte >= 0x20 && byte <= 0x7e
 }

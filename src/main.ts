@@ -10,12 +10,15 @@ import {
 import {
   BYTE_a,
   BYTE_b,
+  BYTE_BACKSPACE,
   BYTE_c,
   BYTE_CTRL_B,
   BYTE_CTRL_C,
   BYTE_CTRL_F,
+  BYTE_CTRL_L,
   BYTE_CTRL_O,
   BYTE_CTRL_R,
+  BYTE_ENTER,
   BYTE_ESCAPE,
   BYTE_G,
   BYTE_g,
@@ -26,10 +29,14 @@ import {
   BYTE_l,
   BYTE_LEFT_BRACKET,
   BYTE_m,
+  BYTE_n,
+  BYTE_N,
   BYTE_o,
   BYTE_q,
+  BYTE_QUESTION,
   BYTE_QUOTE,
   BYTE_RIGHT_BRACKET,
+  BYTE_SLASH,
   BYTE_SPACE,
   BYTE_TAB,
   BYTE_u,
@@ -38,6 +45,7 @@ import {
   digitValue,
   isDigit,
   isLowerAlpha,
+  isPrintable,
 } from './keys.js'
 
 import { spawn } from 'node:child_process'
@@ -306,12 +314,28 @@ async function main() {
       return { type: 'exit-file-cursor' }
     }
 
+    if (byte === BYTE_SLASH) {
+      return { type: 'search-start', direction: 'forward' }
+    }
+
+    if (byte === BYTE_QUESTION) {
+      return { type: 'search-start', direction: 'backward' }
+    }
+
     if (byte === BYTE_SPACE) {
       return { type: 'toggle-mark' }
     }
 
     if (byte === BYTE_u) {
       return { type: 'undo-mark' }
+    }
+
+    if (byte === BYTE_n) {
+      return { type: 'search-next' }
+    }
+
+    if (byte === BYTE_N) {
+      return { type: 'search-prev' }
     }
 
     if (byte === BYTE_CTRL_R) {
@@ -335,6 +359,8 @@ async function main() {
         return { type: 'jump-back' }
       case BYTE_TAB:
         return { type: 'jump-forward' }
+      case BYTE_CTRL_L:
+        return { type: 'search-clear-highlights' }
       default:
         return null
     }
@@ -342,6 +368,38 @@ async function main() {
 
   process.stdin.on('data', (data: Buffer) => {
     if (data[0] === BYTE_ESCAPE && data.length > 1) {
+      return
+    }
+
+    if (state.search.inputMode) {
+      for (let i = 0; i < data.length; i++) {
+        const byte = data[i]
+        if (byte === undefined) continue
+
+        if (byte === BYTE_ESCAPE) {
+          state = reduce(state, { type: 'search-cancel' })
+          process.stdout.write(render(state))
+          return
+        }
+
+        if (byte === BYTE_ENTER) {
+          state = reduce(state, { type: 'search-confirm' })
+          process.stdout.write(render(state))
+          return
+        }
+
+        if (byte === BYTE_BACKSPACE) {
+          state = reduce(state, { type: 'search-input', char: null })
+          process.stdout.write(render(state))
+          continue
+        }
+
+        if (isPrintable(byte)) {
+          state = reduce(state, { type: 'search-input', char: String.fromCharCode(byte) })
+          process.stdout.write(render(state))
+        }
+      }
+
       return
     }
 

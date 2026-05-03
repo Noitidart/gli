@@ -2,9 +2,15 @@ import type { UiState } from './state.js'
 import { formatBranches } from './state.js'
 import type { Commit, FileStat } from './git.js'
 
+const hasActiveBar = (state: UiState): boolean =>
+  state.search.inputMode || (state.search.query !== null && state.search.highlightsVisible)
+
 export function render(state: UiState): string {
   const lines: string[] = []
-  const maxLineNum = state.scrollOffset + state.termHeight
+
+  const reserved = hasActiveBar(state) ? 1 : 0
+  const effectiveHeight = state.termHeight - reserved
+  const maxLineNum = state.scrollOffset + effectiveHeight
   const numWidth = Math.max(3, String(maxLineNum).length)
   const shaWidth = 7
   const branchWidth = state.branchColWidth
@@ -14,7 +20,7 @@ export function render(state: UiState): string {
   let commitIndex = state.scrollOffset
   let displayLine = 0
 
-  while (displayLine < state.termHeight && commitIndex < state.commits.length) {
+  while (displayLine < effectiveHeight && commitIndex < state.commits.length) {
     const commit = state.commits[commitIndex]
     if (commit === undefined) {
       commitIndex++
@@ -33,7 +39,7 @@ export function render(state: UiState): string {
         state.termWidth,
       )
 
-      if (displayLine + expandedLines.length > state.termHeight) {
+      if (displayLine + expandedLines.length > effectiveHeight) {
         break
       }
 
@@ -58,7 +64,48 @@ export function render(state: UiState): string {
     commitIndex++
   }
 
+  if (hasActiveBar(state)) {
+    if (state.search.inputMode) {
+      const prefix = state.search.direction === 'forward' ? '/' : '?'
+      const promptLine = `${prefix}${state.search.prompt}`
+      lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)
+    } else if (state.search.query !== null && state.search.highlightsVisible) {
+      const matches = state.search.scope === 'list' ? state.search.listMatches : state.search.expandedMatches
+      if (matches.length > 0 && state.search.activeIndex >= 0) {
+        const counter = `match ${state.search.activeIndex + 1} of ${matches.length}`
+        lines.push(truncate(counter, state.termWidth))
+      } else if (matches.length === 0) {
+        lines.push(truncate('No matches', state.termWidth))
+      } else {
+        lines.push('')
+      }
+    }
+  }
+
   return '\x1b[2J\x1b[H' + lines.join('\r\n')
+}
+
+function highlight(text: string, query: string | null): string {
+  if (query === null || query === '') return text
+
+  const lower = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  let result = ''
+  let pos = 0
+
+  while (true) {
+    const idx = lower.indexOf(lowerQuery, pos)
+    if (idx === -1) {
+      result += text.slice(pos)
+      break
+    }
+
+    result += text.slice(pos, idx)
+    result += `\x1b[7m${text.slice(idx, idx + query.length)}\x1b[0m`
+    pos = idx + query.length
+  }
+
+  return result
 }
 
 function renderFoldedCommit(
@@ -87,10 +134,25 @@ function renderFoldedCommit(
 
   const line = `${relStr} ${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
 
-  if (state.fileCursorIndex === null && index === state.cursorIndex) {
+  const activeBodyMatch = state.search.scope === 'expanded'
+    && state.search.highlightsVisible
+    && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
+
+  if (state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch) {
     return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`
   }
-  return line
+
+  let highlightQuery: string | null = null
+
+  if (state.search.highlightsVisible && state.search.query !== null) {
+    if (state.search.scope === 'list') {
+      highlightQuery = state.search.query
+    } else if (state.search.scope === 'expanded' && index === state.expandedIndex) {
+      highlightQuery = state.search.query
+    }
+  }
+
+  return highlight(line, highlightQuery)
 }
 
 function renderExpandedCommit(
@@ -107,10 +169,16 @@ function renderExpandedCommit(
 
   lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, branchWidth, termWidth))
 
-  const authorLine = `${indent}Author: ${commit.author}    ${commit.date}`
-  lines.push(truncate(authorLine, termWidth))
+  const authorLine = truncate(`${indent}Author: ${commit.author}    ${commit.date}`, termWidth)
+  lines.push(authorLine)
 
   lines.push('')
+
+  const expandedHighlight = state.search.scope === 'expanded'
+    && state.search.highlightsVisible
+    && state.search.query !== null
+    ? state.search.query
+    : null
 
   if (commit.body === null) {
     lines.push(`${indent}Loading...`)
@@ -120,10 +188,26 @@ function renderExpandedCommit(
 
     for (let i = 0; i < bodyLines.length; i++) {
       const bodyLine = bodyLines[i] ?? ''
-      if (maxBodyLen > 0) {
-        lines.push(`${indent}${truncate(bodyLine, maxBodyLen)}`)
+
+      if (expandedHighlight !== null) {
+        const activeMatch = state.search.expandedMatches[state.search.activeIndex]
+        const isActiveBodyLine = activeMatch?.type === 'body' && activeMatch.line === i
+          && state.fileCursorIndex === null
+
+        if (isActiveBodyLine) {
+          const fullLine = maxBodyLen > 0 ? `${indent}${truncate(bodyLine, maxBodyLen)}` : indent
+          lines.push(`\x1b[7m${fullLine.padEnd(termWidth)}\x1b[0m`)
+        } else {
+          const truncated = maxBodyLen > 0 ? truncate(bodyLine, maxBodyLen) : ''
+          const highlighted = highlight(truncated, expandedHighlight)
+          lines.push(maxBodyLen > 0 ? `${indent}${highlighted}` : indent)
+        }
       } else {
-        lines.push(indent)
+        if (maxBodyLen > 0) {
+          lines.push(`${indent}${truncate(bodyLine, maxBodyLen)}`)
+        } else {
+          lines.push(indent)
+        }
       }
     }
   }
@@ -142,13 +226,22 @@ function renderExpandedCommit(
       }
       const dot = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
       const fileLine = `${dot} ${file.path}  +${file.added} -${file.deleted}`
-      let rendered = maxFileLen > 0 ? `${indent}${truncate(fileLine, maxFileLen)}` : indent
 
       if (state.fileCursorIndex === i) {
-        rendered = `\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`
+        let content = maxFileLen > 0 ? truncate(fileLine, maxFileLen) : ''
+        if (expandedHighlight !== null && maxFileLen > 0) {
+          content = highlight(content, expandedHighlight)
+        }
+        const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
+        lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
+      } else {
+        let content = maxFileLen > 0 ? truncate(fileLine, maxFileLen) : ''
+        if (expandedHighlight !== null && maxFileLen > 0) {
+          content = highlight(content, expandedHighlight)
+        }
+        const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
+        lines.push(rendered)
       }
-
-      lines.push(rendered)
     }
   }
 
