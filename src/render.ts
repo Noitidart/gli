@@ -85,7 +85,7 @@ function renderFoldedCommit(
 
   const line = `${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
 
-  if (index === state.cursorIndex) {
+  if (state.fileCursorIndex === null && index === state.cursorIndex) {
     return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`
   }
   return line
@@ -139,11 +139,13 @@ function renderExpandedCommit(
         continue
       }
       const fileLine = `${file.path}  +${file.added} -${file.deleted}`
-      if (maxFileLen > 0) {
-        lines.push(`${indent}${truncate(fileLine, maxFileLen)}`)
-      } else {
-        lines.push(indent)
+      let rendered = maxFileLen > 0 ? `${indent}${truncate(fileLine, maxFileLen)}` : indent
+
+      if (state.fileCursorIndex === i) {
+        rendered = `\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`
       }
+
+      lines.push(rendered)
     }
   }
 

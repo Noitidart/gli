@@ -15,9 +15,11 @@ import {
   BYTE_ESCAPE,
   BYTE_G,
   BYTE_g,
+  BYTE_h,
   BYTE_i,
   BYTE_j,
   BYTE_k,
+  BYTE_l,
   BYTE_o,
   BYTE_c,
   BYTE_q,
@@ -134,6 +136,14 @@ async function main() {
 
     digitBuffer = ''
 
+    if (byte === BYTE_l) {
+      return { type: 'enter-file-cursor' }
+    }
+
+    if (byte === BYTE_h) {
+      return { type: 'exit-file-cursor' }
+    }
+
     switch (byte) {
       case BYTE_i:
         return { type: 'inspect' }
@@ -198,11 +208,20 @@ async function main() {
           process.stdin.pause()
           exitAltScreen()
 
-          const child = spawn('git', [
+          const args = [
             '-c', 'diff.external=difft',
             'show', '--ext-diff',
             commit.fullSha,
-          ], {
+          ]
+
+          if (state.fileCursorIndex !== null && commit.files !== null) {
+            const file = commit.files[state.fileCursorIndex]
+            if (file !== undefined) {
+              args.push('--', file.path)
+            }
+          }
+
+          const child = spawn('git', args, {
             stdio: 'inherit',
             cwd: process.cwd(),
           })

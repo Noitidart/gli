@@ -12,6 +12,7 @@ export type UiState = {
   branchTips: Map<string, string[]>
   branchColWidth: number
   unpushedShas: Set<string>
+  fileCursorIndex: number | null
 }
 
 export type Action =
@@ -25,6 +26,8 @@ export type Action =
   | { type: 'expand' }
   | { type: 'fold' }
   | { type: 'toggle-expand' }
+  | { type: 'enter-file-cursor' }
+  | { type: 'exit-file-cursor' }
   | { type: 'yank' }
   | { type: 'yank-line'; line: number }
   | { type: 'inspect' }
@@ -57,6 +60,7 @@ export function createInitialState(
     branchTips,
     branchColWidth,
     unpushedShas,
+    fileCursorIndex: null,
   }
 }
 
@@ -82,6 +86,10 @@ export function reduce(state: UiState, action: Action): UiState {
       return fold(state)
     case 'toggle-expand':
       return toggleExpand(state)
+    case 'enter-file-cursor':
+      return enterFileCursor(state)
+    case 'exit-file-cursor':
+      return exitFileCursor(state)
     case 'yank':
       return state
     case 'yank-line':
@@ -102,6 +110,17 @@ export function reduce(state: UiState, action: Action): UiState {
 }
 
 function moveDown(state: UiState): UiState {
+  if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
+    const expandedCommit = state.commits[state.expandedIndex]
+    const files = expandedCommit?.files
+
+    if (files != null && state.fileCursorIndex < files.length - 1) {
+      return { ...state, fileCursorIndex: state.fileCursorIndex + 1 }
+    }
+
+    return moveDown({ ...state, fileCursorIndex: null, expandedIndex: null })
+  }
+
   if (state.cursorIndex >= state.commits.length - 1) {
     return state
   }
@@ -122,6 +141,14 @@ function moveDown(state: UiState): UiState {
 }
 
 function moveUp(state: UiState): UiState {
+  if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
+    if (state.fileCursorIndex > 0) {
+      return { ...state, fileCursorIndex: state.fileCursorIndex - 1 }
+    }
+
+    return { ...state, fileCursorIndex: null }
+  }
+
   if (state.cursorIndex <= 0) {
     return state
   }
@@ -142,6 +169,10 @@ function moveUp(state: UiState): UiState {
 }
 
 function pageDown(state: UiState): UiState {
+  if (state.fileCursorIndex !== null) {
+    return pageDown({ ...state, fileCursorIndex: null })
+  }
+
   const newCursor = Math.min(
     state.cursorIndex + state.termHeight,
     state.commits.length - 1,
@@ -157,6 +188,10 @@ function pageDown(state: UiState): UiState {
 }
 
 function pageUp(state: UiState): UiState {
+  if (state.fileCursorIndex !== null) {
+    return pageUp({ ...state, fileCursorIndex: null })
+  }
+
   const newCursor = Math.max(
     state.cursorIndex - state.termHeight,
     0,
@@ -177,6 +212,7 @@ function jumpTop(state: UiState): UiState {
     cursorIndex: 0,
     scrollOffset: 0,
     expandedIndex: null,
+    fileCursorIndex: null,
   }
 }
 
@@ -189,6 +225,7 @@ function jumpBottom(state: UiState): UiState {
     cursorIndex: newCursor,
     scrollOffset: newOffset,
     expandedIndex: null,
+    fileCursorIndex: null,
   }
 }
 
@@ -201,6 +238,7 @@ function jumpLine(state: UiState, line: number): UiState {
     cursorIndex: Math.max(0, newCursor),
     scrollOffset: newOffset,
     expandedIndex: null,
+    fileCursorIndex: null,
   }
 }
 
@@ -208,6 +246,7 @@ function expand(state: UiState): UiState {
   return {
     ...state,
     expandedIndex: state.cursorIndex,
+    fileCursorIndex: null,
   }
 }
 
@@ -215,6 +254,7 @@ function fold(state: UiState): UiState {
   return {
     ...state,
     expandedIndex: null,
+    fileCursorIndex: null,
   }
 }
 
@@ -223,11 +263,13 @@ function toggleExpand(state: UiState): UiState {
     return {
       ...state,
       expandedIndex: null,
+      fileCursorIndex: null,
     }
   }
   return {
     ...state,
     expandedIndex: state.cursorIndex,
+    fileCursorIndex: null,
   }
 }
 
@@ -244,6 +286,25 @@ function resize(state: UiState, height: number, width: number): UiState {
     termWidth: width,
     scrollOffset: newOffset,
   }
+}
+
+function enterFileCursor(state: UiState): UiState {
+  if (state.expandedIndex === null) {
+    return state
+  }
+
+  const expandedCommit = state.commits[state.expandedIndex]
+  const files = expandedCommit?.files
+
+  if (files != null && files.length > 0) {
+    return { ...state, fileCursorIndex: 0 }
+  }
+
+  return state
+}
+
+function exitFileCursor(state: UiState): UiState {
+  return { ...state, fileCursorIndex: null }
 }
 
 function commitsLoaded(
