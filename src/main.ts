@@ -38,6 +38,18 @@ import { createInitialState, reduce, type Action } from './state.js'
 import { render } from './render.js'
 import { copyToClipboard } from './clipboard.js'
 
+function parsePathspecs(argv: string[]): string[] | undefined {
+  const dashIndex = argv.indexOf('--')
+  if (dashIndex === -1) {
+    return undefined
+  }
+  const paths = argv.slice(dashIndex + 1)
+  if (paths.length === 0) {
+    return undefined
+  }
+  return paths
+}
+
 async function main() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.error('gli requires a terminal')
@@ -49,9 +61,10 @@ async function main() {
   hideCursor()
 
   const size = getTermSize()
+  const pathspecs = parsePathspecs(process.argv)
 
-  const totalCommits = await getTotalCount()
-  const initialCommits = await getCommits(0, 200)
+  const totalCommits = await getTotalCount(pathspecs)
+  const initialCommits = await getCommits(0, 200, pathspecs)
   const hasMore = initialCommits.length >= 200
   const branchTips = await getBranchTips()
   const unpushedShas = await getUnpushedShas()
@@ -309,7 +322,7 @@ async function main() {
 
       setImmediate(async () => {
         try {
-          const newCommits = await getCommits(state.commits.length, 200)
+          const newCommits = await getCommits(state.commits.length, 200, pathspecs)
           state = reduce(state, {
             type: 'commits-loaded',
             commits: newCommits,

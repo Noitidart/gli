@@ -46,23 +46,33 @@ function spawnGit(args: string[]): Promise<string> {
   })
 }
 
-export async function getTotalCount(): Promise<number> {
+export async function getTotalCount(pathspecs?: string[]): Promise<number> {
   try {
-    const output = await spawnGit(['rev-list', '--count', 'HEAD'])
+    const args = ['rev-list', '--count', 'HEAD']
+    if (pathspecs !== undefined && pathspecs.length > 0) {
+      args.push('--', ...pathspecs)
+    }
+    const output = await spawnGit(args)
     return parseInt(output.trim(), 10)
   } catch {
     return 0
   }
 }
 
-export async function getCommits(skip: number, maxCount: number): Promise<Commit[]> {
-  const output = await spawnGit([
+export async function getCommits(skip: number, maxCount: number, pathspecs?: string[]): Promise<Commit[]> {
+  const args = [
     'log',
     '--format=format:%h%x1f%H%x1f%an%x1f%ad%x1f%s%x00',
     '--date=short',
     `--skip=${skip}`,
     `--max-count=${maxCount}`,
-  ])
+  ]
+
+  if (pathspecs !== undefined && pathspecs.length > 0) {
+    args.push('--', ...pathspecs)
+  }
+
+  const output = await spawnGit(args)
 
   const commits: Commit[] = []
   const chunks = output.split('\x00')
