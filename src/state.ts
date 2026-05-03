@@ -474,27 +474,51 @@ function redoMark(state: UiState): UiState {
 }
 
 function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiState {
-  let current = state
+  if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
+    const expandedCommit = state.commits[state.expandedIndex]
+    const files = expandedCommit?.files
 
-  if (state.fileCursorIndex !== null) {
-    current = clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null })
-  } else {
-    current = { ...state, expandedIndex: null }
+    if (count === 1) {
+      if (direction === 'down') {
+        if (files != null && state.fileCursorIndex < files.length - 1) {
+          return { ...state, fileCursorIndex: state.fileCursorIndex + 1 }
+        }
+
+        return moveRel(
+          clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null }),
+          'down',
+          1,
+        )
+      }
+
+      if (state.fileCursorIndex > 0) {
+        return { ...state, fileCursorIndex: state.fileCursorIndex - 1 }
+      }
+
+      return clearSelections({ ...state, fileCursorIndex: null })
+    }
+
+    return moveRel(
+      clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null }),
+      direction,
+      count,
+    )
   }
 
+  const raw = { ...state, expandedIndex: null }
   const delta = direction === 'down' ? count : -count
-  const newCursor = Math.max(0, Math.min(current.commits.length - 1, current.cursorIndex + delta))
+  const newCursor = Math.max(0, Math.min(raw.commits.length - 1, raw.cursorIndex + delta))
 
-  let newOffset = current.scrollOffset
+  let newOffset = raw.scrollOffset
 
-  if (newCursor < current.scrollOffset) {
+  if (newCursor < raw.scrollOffset) {
     newOffset = newCursor
-  } else if (newCursor >= current.scrollOffset + current.termHeight) {
-    newOffset = newCursor - current.termHeight + 1
+  } else if (newCursor >= raw.scrollOffset + raw.termHeight) {
+    newOffset = newCursor - raw.termHeight + 1
   }
 
   return {
-    ...current,
+    ...raw,
     cursorIndex: newCursor,
     scrollOffset: newOffset,
   }
