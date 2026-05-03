@@ -230,7 +230,9 @@ async function main() {
           ]
 
           if (state.fileCursorIndex !== null && commit.files !== null) {
-            if (state.selectedFiles.size > 0) {
+            const cursorFileIsMarked = state.selectedFiles.has(state.fileCursorIndex)
+
+            if (state.selectedFiles.size > 0 && cursorFileIsMarked) {
               args.push('--')
 
               const sortedIndices = [...state.selectedFiles].sort((a, b) => a - b)
