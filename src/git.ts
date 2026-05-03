@@ -175,6 +175,41 @@ export async function getCommitsWithBody(skip: number, maxCount: number, pathspe
     })
   }
 
+  const emptyFileIndices: number[] = []
+  for (let i = 0; i < commits.length; i++) {
+    const c = commits[i]
+    if (c !== undefined && c.files !== null && c.files.length === 0) {
+      emptyFileIndices.push(i)
+    }
+  }
+
+  if (emptyFileIndices.length > 0) {
+    const rootFiles = await Promise.all(
+      emptyFileIndices.map((idx) => {
+        const sha = commits[idx]!.fullSha
+        return spawnGit(['diff-tree', '--numstat', '-r', '--root', sha])
+          .then((out) => ({ idx, out }))
+          .catch(() => ({ idx, out: '' }))
+      }),
+    )
+
+    for (const { idx, out } of rootFiles) {
+      const lines = out.trim().split('\n')
+      const numstatLines: string[] = []
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i]
+        if (line !== undefined && NUMSTAT_RE.test(line)) {
+          numstatLines.push(line)
+        }
+      }
+
+      if (numstatLines.length > 0) {
+        const c = commits[idx]!
+        commits[idx] = { ...c, files: parseNumstatLines(numstatLines) }
+      }
+    }
+  }
+
   return commits
 }
 
@@ -235,7 +270,7 @@ export async function getBranchTips(): Promise<Map<string, string[]>> {
 export async function getCommitDetail(sha: string): Promise<{ body: string; files: FileStat[] }> {
   const [bodyOutput, statsOutput] = await Promise.all([
     spawnGit(['log', '-1', '--format=%b', sha]),
-    spawnGit(['diff-tree', '--numstat', '-r', sha]),
+    spawnGit(['diff-tree', '--numstat', '-r', '--root', sha]),
   ])
 
   const files: FileStat[] = []

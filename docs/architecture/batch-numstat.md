@@ -27,30 +27,37 @@ With `--numstat`, the numstat lines appear after the `\x00` record separator:
 <next record...>
 ```
 
-After splitting on `\x00`, each chunk contains:
+After splitting on `\x00`, the numstat lines for commit N appear at the **start**
+of chunk N+1 (not in the same chunk as the commit fields). Each chunk is scanned
+top-down for numstat lines before parsing the commit fields that follow.
 
-```
-<\x1f-separated fields>\n<numstat lines>\n
-```
-
-The body text (from `%b`) is multi-line. Numstat lines are separated from the
-body by appearing after all body content. They match the pattern
+The body text (from `%b`) is multi-line. They match the pattern
 `\d+\t\d+\t<path>` or `-\t-\t<path>` (binary files).
 
-## Merge commits and root commits
+## Merge commits
 
 `git log --numstat` (without `-m`) outputs **no numstat lines** for merge
-commits and root commits. This is consistent with the existing `getCommitDetail()`
-which uses `diff-tree --numstat -r` (also without `-m`) and also returns empty
-output for these cases.
+commits. We deliberately do **not** use `-m` because it produces duplicate
+entries (one diff per parent) which would corrupt parsing.
 
 The individual commits brought in by a merge **do** appear in the log with their
 own numstat lines (since gli runs without `--first-parent`). No information is
-lost — only the merge commit itself shows an empty file list, which matches
-current behavior.
+lost — the user can expand those individual commits to see their file stats.
 
-We deliberately do **not** use `-m` because it produces duplicate entries (one
-diff per parent) which would corrupt parsing.
+This is different from GitHub, which diffs the merge commit against its first
+parent. GitHub's view is useful but adds complexity; the current approach covers
+all information via the individual commits.
+
+## Root commits
+
+`git log --numstat` also outputs no numstat lines for root commits. Unlike merge
+commits, there are no "other commits in the log" to look at — the root commit is
+the only way to see what was initially created.
+
+After batch parsing, `getCommitsWithBody()` detects commits with empty file lists
+and runs `diff-tree --numstat -r --root <sha>` for each in parallel. Root commits
+return results; merge commits return empty. This populates root commit files
+without affecting the main git log command.
 
 ## Fallback
 
