@@ -59,10 +59,76 @@ export async function getTotalCount(pathspecs?: string[]): Promise<number> {
   }
 }
 
+const NUMSTAT_RE = /^(\d+|-)\t(\d+|-)\t(.+)$/
+
+function extractNumstatFromChunk(text: string): { numstatLines: string[]; rest: string } {
+  const lines = text.split('\n')
+  const numstatLines: string[] = []
+
+  let i = 0
+
+  if (lines[0] === '') {
+    i++
+  }
+
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line !== undefined && NUMSTAT_RE.test(line)) {
+      numstatLines.push(line)
+      i++
+    } else {
+      break
+    }
+  }
+
+  const rest = lines.slice(i).join('\n')
+  return { numstatLines, rest }
+}
+
+function resolveRenamePath(path: string): string {
+  const braceRename = path.match(/\{.* => (.+)\}/)
+  if (braceRename !== null) {
+    const prefix = path.slice(0, braceRename.index ?? 0)
+    const suffix = path.slice((braceRename.index ?? 0) + braceRename[0].length)
+    return prefix + braceRename[1]! + suffix
+  }
+
+  if (path.includes(' => ')) {
+    const arrowIdx = path.lastIndexOf(' => ')
+    return path.slice(arrowIdx + 4)
+  }
+
+  return path
+}
+
+function parseNumstatLines(lines: string[]): FileStat[] {
+  const files: FileStat[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line === undefined) continue
+
+    const match = NUMSTAT_RE.exec(line)
+    if (match === null) continue
+
+    const added = parseInt(match[1] ?? '', 10)
+    const deleted = parseInt(match[2] ?? '', 10)
+
+    if (isNaN(added) || isNaN(deleted)) continue
+
+    const path = resolveRenamePath(match[3] ?? '')
+
+    files.push({ path, added, deleted })
+  }
+
+  return files
+}
+
 export async function getCommitsWithBody(skip: number, maxCount: number, pathspecs?: string[]): Promise<Commit[]> {
   const args = [
     'log',
     '--format=format:%h%x1f%H%x1f%an%x1f%ad%x1f%s%x1f%b%x00',
+    '--numstat',
     '--date=short',
     `--skip=${skip}`,
     `--max-count=${maxCount}`,
@@ -76,14 +142,20 @@ export async function getCommitsWithBody(skip: number, maxCount: number, pathspe
 
   const commits: Commit[] = []
   const chunks = output.split('\x00')
-
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     if (chunk === undefined || chunk === '') {
       continue
     }
 
-    const cleaned = chunk.startsWith('\n') ? chunk.slice(1) : chunk
+    const { numstatLines, rest } = extractNumstatFromChunk(chunk)
+
+    if (commits.length > 0 && numstatLines.length > 0) {
+      const prev = commits[commits.length - 1]!
+      commits[commits.length - 1] = { ...prev, files: parseNumstatLines(numstatLines) }
+    }
+
+    const cleaned = rest.startsWith('\n') ? rest.slice(1) : rest
     const parts = cleaned.split('\x1f')
     if (parts.length < 5) {
       continue
@@ -99,7 +171,7 @@ export async function getCommitsWithBody(skip: number, maxCount: number, pathspe
       date: parts[3] ?? '',
       message: parts[4] ?? '',
       body,
-      files: null,
+      files: [],
     })
   }
 
