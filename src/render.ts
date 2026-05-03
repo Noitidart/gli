@@ -108,6 +108,29 @@ function highlight(text: string, query: string | null): string {
   return result
 }
 
+function highlightReversed(text: string, query: string | null): string {
+  if (query === null || query === '') return text
+
+  const lower = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  let result = ''
+  let pos = 0
+
+  while (true) {
+    const idx = lower.indexOf(lowerQuery, pos)
+    if (idx === -1) {
+      result += text.slice(pos)
+      break
+    }
+
+    result += text.slice(pos, idx)
+    result += `\x1b[27m${text.slice(idx, idx + query.length)}\x1b[7m`
+    pos = idx + query.length
+  }
+
+  return result
+}
+
 function renderFoldedCommit(
   state: UiState,
   commit: Pick<Commit, 'shortSha' | 'message'>,
@@ -138,10 +161,6 @@ function renderFoldedCommit(
     && state.search.highlightsVisible
     && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
 
-  if (state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch) {
-    return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`
-  }
-
   let highlightQuery: string | null = null
 
   if (state.search.highlightsVisible && state.search.query !== null) {
@@ -150,6 +169,11 @@ function renderFoldedCommit(
     } else if (state.search.scope === 'expanded' && index === state.expandedIndex) {
       highlightQuery = state.search.query
     }
+  }
+
+  if (state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch) {
+    const lineHighlighted = highlightReversed(line, highlightQuery)
+    return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
   }
 
   return highlight(line, highlightQuery)
@@ -195,7 +219,9 @@ function renderExpandedCommit(
           && state.fileCursorIndex === null
 
         if (isActiveBodyLine) {
-          const fullLine = maxBodyLen > 0 ? `${indent}${truncate(bodyLine, maxBodyLen)}` : indent
+          const truncated = maxBodyLen > 0 ? truncate(bodyLine, maxBodyLen) : ''
+          const highlighted = highlightReversed(truncated, expandedHighlight)
+          const fullLine = maxBodyLen > 0 ? `${indent}${highlighted}` : indent
           lines.push(`\x1b[7m${fullLine.padEnd(termWidth)}\x1b[0m`)
         } else {
           const truncated = maxBodyLen > 0 ? truncate(bodyLine, maxBodyLen) : ''
@@ -229,9 +255,7 @@ function renderExpandedCommit(
 
       if (state.fileCursorIndex === i) {
         let content = maxFileLen > 0 ? truncate(fileLine, maxFileLen) : ''
-        if (expandedHighlight !== null && maxFileLen > 0) {
-          content = highlight(content, expandedHighlight)
-        }
+        content = highlightReversed(content, expandedHighlight)
         const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
         lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
       } else {
