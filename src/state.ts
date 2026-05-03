@@ -318,10 +318,13 @@ function enterFileCursor(state: UiState): UiState {
     return state
   }
 
+  const commitToExpand = state.commits[state.cursorIndex]
+  const alreadyLoaded = commitToExpand?.files != null && commitToExpand.files.length > 0
+
   return {
     ...state,
     expandedIndex: state.cursorIndex,
-    fileCursorIndex: null,
+    fileCursorIndex: alreadyLoaded ? 0 : null,
   }
 }
 
