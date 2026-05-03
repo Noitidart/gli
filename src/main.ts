@@ -15,12 +15,15 @@ import {
   BYTE_g,
   BYTE_j,
   BYTE_k,
+  BYTE_o,
+  BYTE_c,
   BYTE_q,
+  BYTE_z,
   isDigit,
   digitValue,
 } from './keys.js'
 
-import { getCommits, getTotalCount } from './git.js'
+import { getCommits, getTotalCount, getCommitDetail } from './git.js'
 import { createInitialState, reduce, type Action } from './state.js'
 import { render } from './render.js'
 
@@ -42,6 +45,7 @@ async function main() {
 
   let digitBuffer = ''
   let pendingG = false
+  let pendingZ = false
   let gTimer: ReturnType<typeof setTimeout> | null = null
 
   function parseNextByte(byte: number): Action | null {
@@ -56,6 +60,19 @@ async function main() {
       }
     }
 
+    if (pendingZ) {
+      pendingZ = false
+
+      switch (byte) {
+        case BYTE_o:
+          return { type: 'expand' }
+        case BYTE_c:
+          return { type: 'fold' }
+        default:
+          return null
+      }
+    }
+
     if (isDigit(byte)) {
       digitBuffer += String(digitValue(byte))
       return null
@@ -66,6 +83,19 @@ async function main() {
       gTimer = setTimeout(() => {
         pendingG = false
       }, 500)
+      return null
+    }
+
+    if (byte === BYTE_z) {
+      pendingZ = true
+      digitBuffer = ''
+
+      if (pendingG) {
+        clearTimeout(gTimer as ReturnType<typeof setTimeout>)
+        pendingG = false
+        gTimer = null
+      }
+
       return null
     }
 
@@ -123,6 +153,24 @@ async function main() {
 
       state = reduce(state, action)
       process.stdout.write(render(state))
+
+      if (action.type === 'expand' && state.expandedIndex !== null) {
+        const expandedCommit = state.commits[state.expandedIndex]
+
+        if (expandedCommit !== undefined && (expandedCommit.body === null || expandedCommit.files === null)) {
+          const fetchIndex = state.expandedIndex
+
+          getCommitDetail(expandedCommit.fullSha).then((detail) => {
+            state = reduce(state, {
+              type: 'detail-loaded',
+              index: fetchIndex,
+              body: detail.body,
+              files: detail.files,
+            })
+            process.stdout.write(render(state))
+          })
+        }
+      }
     }
 
     if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore) {

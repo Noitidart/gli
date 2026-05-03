@@ -1,4 +1,5 @@
 import type { UiState } from './state.js'
+import type { Commit, FileStat } from './git.js'
 
 export function render(state: UiState): string {
   const lines: string[] = []
@@ -6,30 +7,136 @@ export function render(state: UiState): string {
   const numWidth = Math.max(3, String(maxLineNum).length)
   const shaWidth = 7
 
-  for (let i = state.scrollOffset; i < state.commits.length && i < state.scrollOffset + state.termHeight; i++) {
-    const commit = state.commits[i]
+  const indent = ' '.repeat(numWidth + shaWidth + 4)
+
+  let commitIndex = state.scrollOffset
+  let displayLine = 0
+
+  while (displayLine < state.termHeight && commitIndex < state.commits.length) {
+    const commit = state.commits[commitIndex]
     if (commit === undefined) {
+      commitIndex++
       continue
     }
 
-    const lineNum = i + 1
-    const numStr = String(lineNum).padStart(numWidth)
-    const sha = commit.shortSha.padEnd(shaWidth)
+    if (commitIndex === state.expandedIndex) {
+      const expandedLines = renderExpandedCommit(
+        state,
+        commit,
+        commitIndex,
+        numWidth,
+        shaWidth,
+        indent,
+        state.termWidth,
+      )
 
-    const overhead = numWidth + shaWidth + 4
-    const maxMsgLen = state.termWidth - overhead
-    const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
+      if (displayLine + expandedLines.length > state.termHeight) {
+        break
+      }
 
-    const line = `${numStr}  ${sha}  ${message}`
-
-    if (i === state.cursorIndex) {
-      lines.push(`\x1b[7m${line.padEnd(state.termWidth)}\x1b[0m`)
+      for (let j = 0; j < expandedLines.length; j++) {
+        lines.push(expandedLines[j] ?? '')
+        displayLine++
+      }
     } else {
+      const line = renderFoldedCommit(
+        state,
+        commit,
+        commitIndex,
+        numWidth,
+        shaWidth,
+        state.termWidth,
+      )
       lines.push(line)
+      displayLine++
     }
+
+    commitIndex++
   }
 
   return '\x1b[2J\x1b[H' + lines.join('\r\n')
+}
+
+function renderFoldedCommit(
+  state: UiState,
+  commit: Pick<Commit, 'shortSha' | 'message'>,
+  index: number,
+  numWidth: number,
+  shaWidth: number,
+  termWidth: number,
+): string {
+  const lineNum = index + 1
+  const numStr = String(lineNum).padStart(numWidth)
+  const sha = commit.shortSha.padEnd(shaWidth)
+
+  const overhead = numWidth + shaWidth + 4
+  const maxMsgLen = termWidth - overhead
+  const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
+
+  const line = `${numStr}  ${sha}  ${message}`
+
+  if (index === state.cursorIndex) {
+    return `\x1b[7m${line.padEnd(termWidth)}\x1b[0m`
+  }
+  return line
+}
+
+function renderExpandedCommit(
+  state: UiState,
+  commit: Commit,
+  index: number,
+  numWidth: number,
+  shaWidth: number,
+  indent: string,
+  termWidth: number,
+): string[] {
+  const lines: string[] = []
+
+  lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, termWidth))
+
+  const authorLine = `${indent}Author: ${commit.author}    ${commit.date}`
+  lines.push(truncate(authorLine, termWidth))
+
+  lines.push('')
+
+  if (commit.body === null) {
+    lines.push(`${indent}Loading...`)
+  } else if (commit.body.length > 0) {
+    const bodyLines = commit.body.split('\n')
+    const maxBodyLen = termWidth - indent.length
+
+    for (let i = 0; i < bodyLines.length; i++) {
+      const bodyLine = bodyLines[i] ?? ''
+      if (maxBodyLen > 0) {
+        lines.push(`${indent}${truncate(bodyLine, maxBodyLen)}`)
+      } else {
+        lines.push(indent)
+      }
+    }
+  }
+
+  lines.push('')
+
+  if (commit.files === null) {
+    lines.push(`${indent}Loading...`)
+  } else if (commit.files.length > 0) {
+    const maxFileLen = termWidth - indent.length
+
+    for (let i = 0; i < commit.files.length; i++) {
+      const file = commit.files[i]
+      if (file === undefined) {
+        continue
+      }
+      const fileLine = `${file.path}  +${file.added} -${file.deleted}`
+      if (maxFileLen > 0) {
+        lines.push(`${indent}${truncate(fileLine, maxFileLen)}`)
+      } else {
+        lines.push(indent)
+      }
+    }
+  }
+
+  return lines
 }
 
 function truncate(str: string, maxLen: number): string {
