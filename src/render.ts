@@ -138,7 +138,8 @@ function renderExpandedCommit(
       if (file === undefined) {
         continue
       }
-      const fileLine = `${file.path}  +${file.added} -${file.deleted}`
+      const dot = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
+      const fileLine = `${dot} ${file.path}  +${file.added} -${file.deleted}`
       let rendered = maxFileLen > 0 ? `${indent}${truncate(fileLine, maxFileLen)}` : indent
 
       if (state.fileCursorIndex === i) {

@@ -12,6 +12,7 @@ import {
   BYTE_CTRL_B,
   BYTE_CTRL_C,
   BYTE_CTRL_F,
+  BYTE_CTRL_R,
   BYTE_ESCAPE,
   BYTE_G,
   BYTE_g,
@@ -23,6 +24,8 @@ import {
   BYTE_o,
   BYTE_c,
   BYTE_q,
+  BYTE_SPACE,
+  BYTE_u,
   BYTE_y,
   BYTE_z,
   isDigit,
@@ -144,6 +147,18 @@ async function main() {
       return { type: 'exit-file-cursor' }
     }
 
+    if (byte === BYTE_SPACE) {
+      return { type: 'toggle-mark' }
+    }
+
+    if (byte === BYTE_u) {
+      return { type: 'undo-mark' }
+    }
+
+    if (byte === BYTE_CTRL_R) {
+      return { type: 'redo-mark' }
+    }
+
     switch (byte) {
       case BYTE_i:
         return { type: 'inspect' }
@@ -215,9 +230,25 @@ async function main() {
           ]
 
           if (state.fileCursorIndex !== null && commit.files !== null) {
-            const file = commit.files[state.fileCursorIndex]
-            if (file !== undefined) {
-              args.push('--', file.path)
+            if (state.selectedFiles.size > 0) {
+              args.push('--')
+
+              const sortedIndices = [...state.selectedFiles].sort((a, b) => a - b)
+              for (let fi = 0; fi < sortedIndices.length; fi++) {
+                const fileIndex = sortedIndices[fi]
+                if (fileIndex === undefined) {
+                  continue
+                }
+                const file = commit.files[fileIndex]
+                if (file !== undefined) {
+                  args.push(file.path)
+                }
+              }
+            } else {
+              const file = commit.files[state.fileCursorIndex]
+              if (file !== undefined) {
+                args.push('--', file.path)
+              }
             }
           }
 
