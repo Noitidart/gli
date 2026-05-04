@@ -295,19 +295,10 @@ function moveDown(state: UiState): UiState {
 
 function moveUp(state: UiState): UiState {
   if (isInBodyMatch(state)) {
-    const s = state.search
-    const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
-    if (subjectIdx !== -1) {
-      return clearSelections({
-        ...state,
-        fileCursorIndex: null,
-        search: { ...s, activeIndex: subjectIdx, highlightsVisible: true },
-      })
-    }
     return clearSelections({
       ...state,
       fileCursorIndex: null,
-      search: { ...s, activeIndex: -1 },
+      search: { ...state.search, activeIndex: -1 },
     })
   }
 
@@ -554,6 +545,10 @@ function enterFileCursor(state: UiState): UiState {
   }
 
   if (state.expandedIndex === state.cursorIndex) {
+    if (state.fileCursorIndex !== null) {
+      return state
+    }
+
     const expandedCommit = state.commits[state.expandedIndex]
     const files = expandedCommit?.files
 
