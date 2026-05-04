@@ -80,7 +80,9 @@ export function render(state: UiState): string {
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.loadingAll) {
       const spinner = SPINNER_CHARS[spinnerFrame]
-      const label = state.search.searchBody ? 'Searching all commits (with body)...' : 'Searching all commits...'
+      const label = state.search.searchBody ? 'Searching all commits (with body)...'
+        : state.search.searchFiles ? 'Searching all commits (with files)...'
+        : 'Searching all commits...'
       const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.inputMode) {
@@ -171,7 +173,11 @@ function renderFoldedCommit(
     && state.search.highlightsVisible
     && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
 
-  const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch
+  const activeFileMatch = state.search.scope === 'expanded'
+    && state.search.highlightsVisible
+    && state.search.expandedMatches[state.search.activeIndex]?.type === 'file'
+
+  const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch && !activeFileMatch
 
   const dot = state.unpushedShas.has(commit.shortSha)
     ? (isCursorLine ? '●' : '\x1b[32m●\x1b[0m')
@@ -179,7 +185,7 @@ function renderFoldedCommit(
 
   const bodyInd = state.search.highlightsVisible
     && state.search.query !== null
-    && state.search.bodyMatchIndices.has(index)
+    && (state.search.bodyMatchIndices.has(index) || state.search.fileMatchIndices.has(index))
     ? (isCursorLine ? '▼' : '\x1b[33m▼\x1b[0m')
     : ' '
 
@@ -197,7 +203,7 @@ function renderFoldedCommit(
     } else if (state.search.scope === 'expanded') {
       if (index === state.expandedIndex) {
         highlightInfo = parseCaseFlags(state.search.query)
-      } else if (state.search.searchBody && state.search.listMatches.length > 0) {
+      } else if ((state.search.searchBody || state.search.searchFiles) && state.search.listMatches.length > 0) {
         highlightInfo = parseCaseFlags(state.search.query)
       }
     }
