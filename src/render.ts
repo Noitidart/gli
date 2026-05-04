@@ -17,7 +17,7 @@ const hasActiveBar = (state: UiState): boolean =>
 export function render(state: UiState): string {
   const lines: string[] = []
 
-  const reserved = hasActiveBar(state) ? 1 : 0
+  const reserved = 1
   const effectiveHeight = state.termHeight - reserved
   const maxLineNum = state.scrollOffset + effectiveHeight
   const numWidth = Math.max(3, String(maxLineNum).length)
@@ -73,35 +73,35 @@ export function render(state: UiState): string {
     commitIndex++
   }
 
-  if (hasActiveBar(state)) {
-    if (state.pendingMarkJump !== null) {
-      const spinner = SPINNER_CHARS[spinnerFrame]
-      const progress = `${spinner} Finding master... ${state.commits.length}/${state.totalCommits}`
-      lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
-    } else if (state.search.loadingAll) {
-      const spinner = SPINNER_CHARS[spinnerFrame]
-      const label = state.search.searchBody ? 'Searching all commits (with body)...'
-        : state.search.searchFiles ? 'Searching all commits (with files)...'
-        : 'Searching all commits...'
-      const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
-      lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
-    } else if (state.search.inputMode) {
-      const prefix = state.search.direction === 'forward' ? '/' : '?'
-      const promptLine = state.search.flagError
-        ? `${prefix}${state.search.prompt}  \x1b[31m${state.search.flagError}\x1b[0m`
-        : `${prefix}${state.search.prompt}`
-      lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)
-    } else if (state.search.query !== null && state.search.highlightsVisible) {
-      const matches = state.search.scope === 'list' ? state.search.listMatches : state.search.expandedMatches
-      if (matches.length > 0 && state.search.activeIndex >= 0) {
-        const counter = `match ${state.search.activeIndex + 1} of ${matches.length}`
-        lines.push(truncate(counter, state.termWidth))
-      } else if (matches.length === 0) {
-        lines.push(truncate('No matches', state.termWidth))
-      } else {
-        lines.push('')
-      }
+  if (state.pendingMarkJump !== null) {
+    const spinner = SPINNER_CHARS[spinnerFrame]
+    const progress = `${spinner} Finding master... ${state.commits.length}/${state.totalCommits}`
+    lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
+  } else if (state.search.loadingAll) {
+    const spinner = SPINNER_CHARS[spinnerFrame]
+    const label = state.search.searchBody ? 'Searching all commits (with body)...'
+      : state.search.searchFiles ? 'Searching all commits (with files)...'
+      : 'Searching all commits...'
+    const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
+    lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
+  } else if (state.search.inputMode) {
+    const prefix = state.search.direction === 'forward' ? '/' : '?'
+    const promptLine = state.search.flagError
+      ? `${prefix}${state.search.prompt}  \x1b[31m${state.search.flagError}\x1b[0m`
+      : `${prefix}${state.search.prompt}`
+    lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)
+  } else if (state.search.query !== null && state.search.highlightsVisible) {
+    const matches = state.search.scope === 'list' ? state.search.listMatches : state.search.expandedMatches
+    if (matches.length > 0 && state.search.activeIndex >= 0) {
+      const counter = `match ${state.search.activeIndex + 1} of ${matches.length}`
+      lines.push(truncate(counter, state.termWidth))
+    } else if (matches.length === 0) {
+      lines.push(truncate('No matches', state.termWidth))
+    } else {
+      lines.push('')
     }
+  } else {
+    lines.push('')
   }
 
   return '\x1b[2J\x1b[H' + lines.join('\r\n')
