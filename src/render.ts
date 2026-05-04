@@ -87,7 +87,9 @@ export function render(state: UiState): string {
       lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.inputMode) {
       const prefix = state.search.direction === 'forward' ? '/' : '?'
-      const promptLine = `${prefix}${state.search.prompt}`
+      const promptLine = state.search.flagError
+        ? `${prefix}${state.search.prompt}  \x1b[31m${state.search.flagError}\x1b[0m`
+        : `${prefix}${state.search.prompt}`
       lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)
     } else if (state.search.query !== null && state.search.highlightsVisible) {
       const matches = state.search.scope === 'list' ? state.search.listMatches : state.search.expandedMatches

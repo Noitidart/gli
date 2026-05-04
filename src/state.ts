@@ -22,6 +22,7 @@ export type SearchState = {
   bodyMatchIndices: Set<number>
   searchFiles: boolean
   fileMatchIndices: Set<number>
+  flagError: string | null
   savedScope: SearchScope | null
   searchFrom: ExpandedMatch | null
 }
@@ -143,6 +144,7 @@ function emptySearch(): SearchState {
     bodyMatchIndices: new Set(),
     searchFiles: false,
     fileMatchIndices: new Set(),
+    flagError: null,
     savedScope: null,
     searchFrom: null,
   }
@@ -931,11 +933,12 @@ function findFlagDelimiter(query: string): { delimiter: string; index: number } 
   return null
 }
 
-export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean; searchBody: boolean; searchFiles: boolean } {
+export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean; searchBody: boolean; searchFiles: boolean; flagError: string | null } {
   let ignoreCase: boolean | null = null
   let searchAll = false
   let searchBody = false
   let searchFiles = false
+  let flagError: string | null = null
   let searchPart = query
 
   const validFlags = ['!', 'b', '!b', 'b!', 'f', '!f', 'f!']
@@ -947,6 +950,9 @@ export function parseCaseFlags(query: string): { pattern: string; ignoreCase: bo
       searchAll = flagPart.includes('!')
       searchBody = flagPart.includes('b')
       searchFiles = flagPart.includes('f')
+      searchPart = query.slice(0, delim.index)
+    } else if (/^[!bf]+$/.test(flagPart)) {
+      flagError = `Invalid flag combo: /${flagPart}`
       searchPart = query.slice(0, delim.index)
     }
   }
@@ -969,7 +975,7 @@ export function parseCaseFlags(query: string): { pattern: string; ignoreCase: bo
     ignoreCase = searchPart === searchPart.toLowerCase()
   }
 
-  return { pattern: searchPart, ignoreCase, searchAll, searchBody, searchFiles }
+  return { pattern: searchPart, ignoreCase, searchAll, searchBody, searchFiles, flagError }
 }
 
 function matchesText(text: string, pattern: string, ignoreCase: boolean): boolean {
@@ -1118,21 +1124,21 @@ function searchInput(state: UiState, char: string | null): UiState {
   }
 
   if (newPrompt === '') {
-    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [], bodyMatchIndices: new Set(), fileMatchIndices: new Set() } }
+    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [], bodyMatchIndices: new Set(), fileMatchIndices: new Set(), flagError: null } }
   }
 
-  const { pattern, ignoreCase, searchBody, searchFiles } = parseCaseFlags(newPrompt)
+  const { pattern, ignoreCase, searchBody, searchFiles, flagError } = parseCaseFlags(newPrompt)
 
   if (state.search.scope === 'list') {
     const { matches: listMatches, bodyMatchIndices, fileMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, searchBody, searchFiles)
-    return { ...state, search: { ...state.search, prompt: newPrompt, searchBody, searchFiles, listMatches, bodyMatchIndices, fileMatchIndices } }
+    return { ...state, search: { ...state.search, prompt: newPrompt, searchBody, searchFiles, flagError, listMatches, bodyMatchIndices, fileMatchIndices } }
   }
 
   if (state.expandedIndex !== null) {
-    return { ...state, search: { ...state.search, prompt: newPrompt } }
+    return { ...state, search: { ...state.search, prompt: newPrompt, flagError } }
   }
 
-  return { ...state, search: { ...state.search, prompt: newPrompt } }
+  return { ...state, search: { ...state.search, prompt: newPrompt, flagError } }
 }
 
 function navigateToBodyMatch(
@@ -1224,7 +1230,10 @@ function searchConfirm(state: UiState): UiState {
     return { ...state, search: { ...emptySearch() } }
   }
 
-  const { searchAll, searchBody, searchFiles } = parseCaseFlags(s.prompt)
+  const { searchAll, searchBody, searchFiles, flagError } = parseCaseFlags(s.prompt)
+  if (flagError) {
+    return { ...state, search: { ...s, flagError } }
+  }
   const query = s.prompt
 
   if (s.scope === 'list' && searchAll && state.hasMore) {
