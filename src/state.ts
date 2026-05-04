@@ -390,8 +390,7 @@ function jumpTop(state: UiState): UiState {
     expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   })
 }
 
@@ -409,8 +408,7 @@ function jumpBottom(state: UiState): UiState {
     expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   })
 }
 
@@ -428,8 +426,7 @@ function jumpLine(state: UiState, line: number): UiState {
     expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   })
 }
 
@@ -695,6 +692,13 @@ function preserveListSearch(search: SearchState): SearchState {
   return clearSearch()
 }
 
+function withJump(state: UiState): Partial<UiState> {
+  return {
+    jumpStack: [...state.jumpStack, state.cursorIndex],
+    jumpForwardStack: [],
+  }
+}
+
 function toggleMark(state: UiState): UiState {
   if (state.fileCursorIndex === null) {
     return state
@@ -936,8 +940,7 @@ function jumpForward(state: UiState): UiState {
     expandedIndex: null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   })
 }
 
@@ -1199,8 +1202,7 @@ function navigateToBodyMatch(
       highlightsVisible: true,
       loadingAll: false,
     },
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   }
 }
 
@@ -1241,8 +1243,7 @@ function navigateToFileMatch(
       highlightsVisible: true,
       loadingAll: false,
     },
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   }
 }
 
@@ -1302,8 +1303,7 @@ function searchConfirm(state: UiState): UiState {
           scrollOffset: newOffset,
           expandedIndex: null,
           search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex, highlightsVisible: true },
-          jumpStack: [...state.jumpStack, state.cursorIndex],
-          jumpForwardStack: [],
+          ...withJump(state),
         }
       }
     }
@@ -1503,8 +1503,7 @@ function searchNext(state: UiState): UiState {
       expandedIndex: null,
       fileCursorIndex: null,
       search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true },
-      jumpStack: [...state.jumpStack, state.cursorIndex],
-      jumpForwardStack: [],
+      ...withJump(state),
     }
   }
 
@@ -1586,8 +1585,7 @@ function searchPrev(state: UiState): UiState {
       expandedIndex: null,
       fileCursorIndex: null,
       search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true },
-      jumpStack: [...state.jumpStack, state.cursorIndex],
-      jumpForwardStack: [],
+      ...withJump(state),
     }
   }
 
@@ -1664,8 +1662,7 @@ function searchLoadComplete(state: UiState): UiState {
         scrollOffset: newOffset,
         expandedIndex: null,
         search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex, highlightsVisible: true, loadingAll: false },
-        jumpStack: [...state.jumpStack, state.cursorIndex],
-        jumpForwardStack: [],
+        ...withJump(state),
       }
     }
   }
@@ -1839,7 +1836,6 @@ function applyJump(state: UiState, targetIndex: number): UiState {
     expandedIndex: null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
-    jumpStack: [...state.jumpStack, state.cursorIndex],
-    jumpForwardStack: [],
+    ...withJump(state),
   })
 }
