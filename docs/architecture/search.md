@@ -121,6 +121,39 @@ n → Re-expand commit 3, cursor on body match line (doesn't skip to commit 7)
 
 Smart case by default: all-lowercase queries are case-insensitive; any uppercase letter makes it case-sensitive. Override with `\c` (force insensitive) or `\C` (force sensitive) anywhere in the query.
 
+## Restarting Search (pressing `/` or `?` while search is active)
+
+When the user presses `/` or `?` while a search is already active, the new search starts without disrupting the current view. The old highlights and cursor position remain stable while typing the new query.
+
+### How it works
+
+Three fields on `SearchState` support this:
+
+- **`savedScope`** — stores the previous search scope (`'list'` or `'expanded'`) before the new search input begins. Used to restore the old search on cancel.
+- **`searchFrom`** — stores the current active match position (an `ExpandedMatch`: subject, body line, or file index) when restarting an expanded search. Used to resolve the first match of the new search relative to the user's current position.
+- **Preserved state** — `searchStart` spreads the existing search state instead of resetting it, so `query`, `listMatches`, `bodyMatchIndices`, `activeIndex`, etc. all persist.
+
+### Behavior during input
+
+- **Old highlights stay visible** — the render continues using the preserved `query` and `expandedMatches`/`listMatches` while the new prompt is being typed.
+- **Cursor does not move** — the old `activeIndex` and `fileCursorIndex` remain unchanged during typing.
+- **Expanded scope: prompt-only updates** — for expanded scope, `searchInput` only updates `prompt`. It does not recompute `expandedMatches` or change `activeIndex`. This prevents the active match from jumping around as the partial query changes the match set.
+- **List scope: incremental computation** — for list scope, `searchInput` still computes `listMatches` incrementally. This is safe because the list view doesn't render an active match during input mode (just text highlights), so there's no visual jumping.
+
+### On confirm
+
+- **Expanded scope**: `searchConfirm` recomputes `expandedMatches` from the confirmed query (not from the stale matches). It resolves `activeIndex` using `resolveExpandedFromPosition(matches, searchFrom, direction)`, which finds the first match strictly after the saved position. For forward: first match with a higher position rank (subject < body lines < files). For backward: first match with a lower rank. Wraps if no match exists past the position.
+- **List scope**: `searchConfirm` resolves from `cursorIndex` using `resolveListActiveIndex` as usual.
+
+### On cancel
+
+- If `savedScope` is set, `searchCancel` recomputes matches from the preserved `query` and restores the original scope. This fully reconstructs the previous search state.
+- If no previous search existed (`query === null`), the search is cleared entirely.
+
+### Position ordering for expanded matches
+
+Expanded matches have a natural order: subject → body lines (by line number) → files (by index). The helpers `isMatchAfterPosition` and `isMatchBeforePosition` compare matches using `TYPE_ORDER` ({ subject: 0, body: 1, file: 2 }) and within-type ordering (body line numbers, file indices).
+
 ## List Search While Expanded
 
 When a list search is active and the user expands a matching commit, then enters the file list, pressing `N` (going backward/upward) first lands on the expanded commit's subject match before continuing to the previous commit on the next press. This prevents skipping the current commit's visible subject highlight.
