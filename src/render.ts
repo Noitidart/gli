@@ -180,7 +180,7 @@ function renderFoldedCommit(
   const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch && !activeFileMatch
 
   const dot = state.unpushedShas.has(commit.shortSha)
-    ? (isCursorLine ? '●' : '\x1b[32m●\x1b[0m')
+    ? (isCursorLine ? '⬆' : '\x1b[32m⬆\x1b[0m')
     : ' '
 
   const bodyInd = state.search.highlightsVisible
