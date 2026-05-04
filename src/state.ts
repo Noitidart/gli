@@ -340,12 +340,13 @@ function pageDown(state: UiState): UiState {
     state.commits.length - 1,
   )
   const newOffset = Math.max(0, newCursor - state.termHeight + 1)
+  const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
     ...state,
     cursorIndex: newCursor,
     scrollOffset: newOffset,
-    expandedIndex: null,
+    expandedIndex: keepExpanded ? state.expandedIndex : null,
     search: preserveListSearch(state.search),
   })
 }
@@ -360,24 +361,27 @@ function pageUp(state: UiState): UiState {
     0,
   )
   const newOffset = Math.max(newCursor, 0)
+  const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
     ...state,
     cursorIndex: newCursor,
     scrollOffset: newOffset,
-    expandedIndex: null,
+    expandedIndex: keepExpanded ? state.expandedIndex : null,
     search: preserveListSearch(state.search),
   })
 }
 
 function jumpTop(state: UiState): UiState {
-  if (state.cursorIndex === 0) return state
+  if (state.cursorIndex === 0 && state.fileCursorIndex === null) return state
+
+  const keepExpanded = state.expandedIndex === 0
 
   return clearSelections({
     ...state,
     cursorIndex: 0,
     scrollOffset: 0,
-    expandedIndex: null,
+    expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
     jumpStack: [...state.jumpStack, state.cursorIndex],
@@ -387,15 +391,16 @@ function jumpTop(state: UiState): UiState {
 
 function jumpBottom(state: UiState): UiState {
   const newCursor = state.commits.length - 1
-  if (state.cursorIndex === newCursor) return state
+  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) return state
 
   const newOffset = Math.max(0, newCursor - state.termHeight + 1)
+  const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
     ...state,
     cursorIndex: newCursor,
     scrollOffset: newOffset,
-    expandedIndex: null,
+    expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
     jumpStack: [...state.jumpStack, state.cursorIndex],
@@ -405,15 +410,16 @@ function jumpBottom(state: UiState): UiState {
 
 function jumpLine(state: UiState, line: number): UiState {
   const newCursor = Math.max(0, Math.min(line - 1, state.commits.length - 1))
-  if (state.cursorIndex === newCursor) return state
+  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) return state
 
   const newOffset = Math.max(0, newCursor - Math.floor(state.termHeight / 2))
+  const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
     ...state,
     cursorIndex: newCursor,
     scrollOffset: newOffset,
-    expandedIndex: null,
+    expandedIndex: keepExpanded ? state.expandedIndex : null,
     fileCursorIndex: null,
     search: preserveListSearch(state.search),
     jumpStack: [...state.jumpStack, state.cursorIndex],
