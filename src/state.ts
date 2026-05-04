@@ -1256,7 +1256,8 @@ function searchConfirm(state: UiState): UiState {
   if (s.scope === 'list') {
     const matches = s.listMatches
     if (matches.length > 0) {
-      const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
+      const currentMatchIdx = matches.indexOf(state.cursorIndex)
+      const activeIndex = currentMatchIdx >= 0 ? currentMatchIdx : resolveListActiveIndex(matches, state.cursorIndex, s.direction)
       const targetIndex = matches[activeIndex]
 
       if (targetIndex !== undefined) {
