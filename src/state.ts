@@ -591,7 +591,24 @@ function exitFileCursor(state: UiState): UiState {
 
     return clearSelections({ ...state, fileCursorIndex: null })
   }
-  return clearSelections({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
+
+  if (state.expandedIndex !== null) {
+    const s = state.search
+    const hasExpandedSearch = s.scope === 'expanded' && s.highlightsVisible && s.activeIndex >= 0
+    if (hasExpandedSearch) {
+      const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
+      const onSubject = subjectIdx >= 0 && s.activeIndex === subjectIdx
+      if (!onSubject) {
+        return clearSelections({
+          ...state,
+          search: { ...s, activeIndex: subjectIdx >= 0 ? subjectIdx : -1 },
+        })
+      }
+    }
+
+    return clearSelections({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
+  }
+  return state
 }
 
 function commitsLoaded(
