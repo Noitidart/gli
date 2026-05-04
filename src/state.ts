@@ -744,7 +744,11 @@ function redoMark(state: UiState): UiState {
 
 function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiState {
   if (isInBodyMatch(state)) {
-    return direction === 'down' ? moveDown(state) : moveUp(state)
+    let s = state
+    for (let i = 0; i < count; i++) {
+      s = direction === 'down' ? moveDown(s) : moveUp(s)
+    }
+    return s
   }
 
   if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
