@@ -258,7 +258,11 @@ function moveDown(state: UiState): UiState {
     const expandedCommit = state.commits[state.expandedIndex!]
     const files = expandedCommit?.files
     if (files != null && files.length > 0) {
-      return { ...state, fileCursorIndex: 0 }
+      return {
+        ...state,
+        fileCursorIndex: 0,
+        search: { ...state.search, activeIndex: state.search.activeIndex + 1 },
+      }
     }
 
     return moveDown({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
@@ -1166,6 +1170,7 @@ function navigateToBodyMatch(
   searchBody: boolean,
   pattern: string,
   ignoreCase: boolean,
+  direction?: 'forward' | 'backward',
 ): UiState {
   const commit = state.commits[targetIndex]
   if (commit === undefined) return state
@@ -1175,7 +1180,7 @@ function navigateToBodyMatch(
     : state.scrollOffset
 
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, false)
-  const activeIndex = resolveExpandedStartIndex(expandedMatches, null, s.direction)
+  const activeIndex = resolveExpandedStartIndex(expandedMatches, null, direction ?? s.direction)
 
   return {
     ...state,
@@ -1207,6 +1212,7 @@ function navigateToFileMatch(
   searchFiles: boolean,
   pattern: string,
   ignoreCase: boolean,
+  direction?: 'forward' | 'backward',
 ): UiState {
   const commit = state.commits[targetIndex]
   if (commit === undefined) return state
@@ -1216,7 +1222,7 @@ function navigateToFileMatch(
     : state.scrollOffset
 
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, searchFiles)
-  const activeIndex = resolveExpandedStartIndex(expandedMatches, null, s.direction)
+  const activeIndex = resolveExpandedStartIndex(expandedMatches, null, direction ?? s.direction)
 
   return {
     ...state,
@@ -1426,11 +1432,11 @@ function foldAndContinueSearch(
   if (targetIndex === undefined) return foldedState
 
   if (s.searchBody && listResult.bodyMatchIndices.has(targetIndex)) {
-    return navigateToBodyMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchBody, pattern, ignoreCase)
+    return navigateToBodyMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchBody, pattern, ignoreCase, direction)
   }
 
   if (s.searchFiles && listResult.fileMatchIndices.has(targetIndex)) {
-    return navigateToFileMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchFiles, pattern, ignoreCase)
+    return navigateToFileMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchFiles, pattern, ignoreCase, direction)
   }
 
   const newOffset = targetIndex < foldedState.scrollOffset || targetIndex >= foldedState.scrollOffset + foldedState.termHeight
@@ -1711,7 +1717,7 @@ function resolveExpandedStartIndex(
     return matches.length - 1
   }
 
-  return 0
+  return direction === 'forward' ? 0 : matches.length - 1
 }
 
 function resolveExpandedNextIndex(
