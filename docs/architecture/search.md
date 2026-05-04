@@ -162,6 +162,30 @@ Forward navigation (`n`) from the file list with a list search jumps directly to
 
 The body re-expand rule follows the same pattern: when the cursor is on a folded commit that has a body match, `n`/`N` re-expands it instead of jumping past — because the match under the cursor hasn't been visited yet.
 
+## Expand vs. Navigate
+
+There is a clear separation between opening a commit and navigating to a search match within it.
+
+### Opening does not navigate
+
+`zo`/`za` (expand/toggle-expand) and `l` (enter file cursor) open the commit but **do not jump to matches**. The `restoreBodySearchExpanded` and `restoreFileSearchExpanded` functions set up highlights only — they compute `expandedMatches` and set `scope: 'expanded'`, but always set `activeIndex: -1` and do not move `fileCursorIndex`. The cursor lands where the opening command naturally puts it:
+- `zo`/`za` → subject line (`fileCursorIndex: null`)
+- `l` → first file in the list (`fileCursorIndex: 0`)
+
+### Only n/N navigates to matches
+
+`n`/`N` use `navigateToBodyMatch`/`navigateToFileMatch`, which auto-expand, compute matches, set `activeIndex` to the matched position, and move `fileCursorIndex` to the matching file. This is the only path that jumps to a specific match.
+
+### h from file-match line
+
+When expanded search is active and the only matches are file-type (e.g., `/f` search with no body/subject matches), pressing `h` from a file-match line goes to the subject line — not to collapse the commit. The commit stays expanded with `fileCursorIndex: null` and `activeIndex: -1`. A second `h` then folds the commit. This matches normal `h` behavior: first press exits the file list, second press folds.
+
+If the expanded matches include body or subject matches, `h` from a file-match line navigates to the subject match instead (same as the existing body-match behavior).
+
+## Search Persistence Through Collapse
+
+`preserveListSearch` keeps any active search (`query !== null`) alive when collapsing or navigating away from an expanded commit. It sets `scope: 'list'` and clears `expandedMatches`/`activeIndex`, but preserves `query`, `listMatches`, `bodyMatchIndices`, `fileMatchIndices`, `searchBody`, and `searchFiles`. If `listMatches` is empty (because the search was started in expanded scope and never computed list matches), they are lazily recomputed by `searchNext`/`searchPrev`/`foldAndContinueSearch` when needed.
+
 ## Status Bar
 
 When search is active (input mode or confirmed with highlights visible), a status bar occupies the bottom row of the screen. During input it shows the prompt (`/` or `?` plus typed text) in reverse-video. After confirm it shows match count (`match 3 of 12`) or `No matches`. The content area shrinks by one row to make room.
