@@ -307,19 +307,6 @@ function moveUp(state: UiState): UiState {
       return { ...state, fileCursorIndex: state.fileCursorIndex - 1 }
     }
 
-    const s = state.search
-    const hasBodyMatch = s.scope === 'expanded'
-      && s.highlightsVisible
-      && s.expandedMatches.some(m => m.type === 'body')
-    if (hasBodyMatch) {
-      const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
-      return clearSelections({
-        ...state,
-        fileCursorIndex: null,
-        search: { ...s, activeIndex: subjectIdx !== -1 ? subjectIdx : -1 },
-      })
-    }
-
     return clearSelections({ ...state, fileCursorIndex: null })
   }
 
