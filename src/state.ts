@@ -237,7 +237,7 @@ export function reduce(state: UiState, action: Action): UiState {
   }
 }
 
-function isInBodyMatch(state: UiState): boolean {
+function isInNonNavigable(state: UiState): boolean {
   const s = state.search
   if (s.scope !== 'expanded' || !s.highlightsVisible || s.query === null) return false
   if (state.fileCursorIndex !== null) return false
@@ -254,7 +254,7 @@ function isInFileMatch(state: UiState): boolean {
 }
 
 function moveDown(state: UiState): UiState {
-  if (isInBodyMatch(state)) {
+  if (isInNonNavigable(state)) {
     const expandedCommit = state.commits[state.expandedIndex!]
     const files = expandedCommit?.files
     if (files != null && files.length > 0) {
@@ -300,7 +300,7 @@ function moveDown(state: UiState): UiState {
 }
 
 function moveUp(state: UiState): UiState {
-  if (isInBodyMatch(state)) {
+  if (isInNonNavigable(state)) {
     return clearSelections({
       ...state,
       fileCursorIndex: null,
@@ -531,7 +531,7 @@ function resize(state: UiState, height: number, width: number): UiState {
 }
 
 function enterFileCursor(state: UiState): UiState {
-  if (isInBodyMatch(state)) {
+  if (isInNonNavigable(state)) {
     const expandedCommit = state.commits[state.expandedIndex!]
     const files = expandedCommit?.files
     if (files != null && files.length > 0) {
@@ -574,8 +574,8 @@ function exitFileCursor(state: UiState): UiState {
     const hasExpandedSearch = s.scope === 'expanded' && s.highlightsVisible
 
     if (hasExpandedSearch) {
-      const hasBodyOrSubject = s.expandedMatches.some(m => m.type === 'body' || m.type === 'subject')
-      if (hasBodyOrSubject) {
+      const hasNonFile = s.expandedMatches.some(m => m.type !== 'file')
+      if (hasNonFile) {
         const subjectIdx = s.expandedMatches.findIndex(m => m.type === 'subject')
         return clearSelections({
           ...state,
@@ -607,7 +607,13 @@ function exitFileCursor(state: UiState): UiState {
       }
     }
 
-    return clearSelections({ ...state, expandedIndex: null, search: preserveListSearch(state.search) })
+    return clearSelections({
+      ...state,
+      expandedIndex: null,
+      search: s.scope === 'expanded' && s.listMatches.length === 0
+        ? clearSearch()
+        : preserveListSearch(state.search),
+    })
   }
   return state
 }
@@ -776,7 +782,7 @@ function redoMark(state: UiState): UiState {
 }
 
 function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiState {
-  if (isInBodyMatch(state)) {
+  if (isInNonNavigable(state)) {
     let s = state
     for (let i = 0; i < count; i++) {
       s = direction === 'down' ? moveDown(s) : moveUp(s)
@@ -1732,10 +1738,8 @@ function resolveExpandedNextIndex(
 }
 
 function isExpandedMatchBeforeIndex(match: ExpandedMatch, fileCursorIndex: number): boolean {
-  if (match.type === 'subject') return true
-  if (match.type === 'body') return true
   if (match.type === 'file') return match.index < fileCursorIndex
-  return false
+  return true
 }
 
 function isExpandedMatchAfterIndex(match: ExpandedMatch, fileCursorIndex: number): boolean {

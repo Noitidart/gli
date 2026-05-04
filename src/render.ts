@@ -171,15 +171,17 @@ function renderFoldedCommit(
   const branches = formatBranches(state.branchTips.get(commit.shortSha))
   const branchStr = branches.padEnd(branchWidth)
 
-  const activeBodyMatch = state.search.scope === 'expanded'
+  const activeNonSubjectMatch = state.search.scope === 'expanded'
     && state.search.highlightsVisible
-    && state.search.expandedMatches[state.search.activeIndex]?.type === 'body'
+    && state.search.activeIndex >= 0
+    && state.search.expandedMatches[state.search.activeIndex]?.type !== 'subject'
+    && state.fileCursorIndex === null
 
   const activeFileMatch = state.search.scope === 'expanded'
     && state.search.highlightsVisible
     && state.search.expandedMatches[state.search.activeIndex]?.type === 'file'
 
-  const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeBodyMatch && !activeFileMatch
+  const isCursorLine = state.fileCursorIndex === null && index === state.cursorIndex && !activeNonSubjectMatch && !activeFileMatch
 
   const dot = state.unpushedShas.has(commit.shortSha)
     ? (isCursorLine ? '⬆' : '\x1b[32m⬆\x1b[0m')
@@ -195,28 +197,44 @@ function renderFoldedCommit(
   const maxMsgLen = termWidth - overhead
   const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
 
-  const line = `${bodyInd} ${relStr} ${dot} ${numStr}  ${sha}  ${branchStr}  ${message}`
+  const lineNumPrefix = `${bodyInd} ${relStr} ${dot} ${numStr}  `
+  const headerPrefix = `${sha}  ${branchStr}  `
 
   let highlightInfo: HighlightInfo | null = null
+  let highlightScope: 'list' | 'expanded' | null = null
 
   if (state.search.highlightsVisible && state.search.query !== null) {
     if (state.search.scope === 'list') {
       highlightInfo = parseCaseFlags(state.search.query)
+      highlightScope = 'list'
     } else if (state.search.scope === 'expanded') {
       if (index === state.expandedIndex) {
         highlightInfo = parseCaseFlags(state.search.query)
+        highlightScope = 'expanded'
       } else if ((state.search.searchBody || state.search.searchFiles) && state.search.listMatches.length > 0) {
         highlightInfo = parseCaseFlags(state.search.query)
+        highlightScope = 'list'
       }
     }
   }
 
+  const prefixPart = lineNumPrefix
+
   if (isCursorLine) {
-    const lineHighlighted = highlightReversed(line, highlightInfo)
+    const msgHighlighted = highlightReversed(message, highlightInfo)
+    if (highlightScope === 'expanded') {
+      const lineHighlighted = prefixPart + headerPrefix + msgHighlighted
+      return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
+    }
+    const contentHighlighted = highlightReversed(headerPrefix + message, highlightInfo)
+    const lineHighlighted = prefixPart + contentHighlighted
     return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
   }
 
-  return highlight(line, highlightInfo)
+  if (highlightScope === 'expanded') {
+    return prefixPart + headerPrefix + highlight(message, highlightInfo)
+  }
+  return prefixPart + highlight(headerPrefix + message, highlightInfo)
 }
 
 function renderExpandedCommit(
@@ -233,8 +251,7 @@ function renderExpandedCommit(
 
   lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, branchWidth, termWidth))
 
-  const authorLine = truncate(`${indent}Author: ${commit.author}    ${commit.date}`, termWidth)
-  lines.push(authorLine)
+  lines.push(truncate(`${indent}Author: ${commit.author}    ${commit.date}`, termWidth))
 
   lines.push('')
 
@@ -243,6 +260,8 @@ function renderExpandedCommit(
     && state.search.query !== null
     ? parseCaseFlags(state.search.query)
     : null
+
+  lines.push('')
 
   if (commit.body === null) {
     lines.push(`${indent}Loading...`)
@@ -291,18 +310,20 @@ function renderExpandedCommit(
         continue
       }
       const dot = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
-      const fileLine = `${dot} ${file.path}  +${file.added} -${file.deleted}`
+      const filePrefix = `${dot} `
+      const fileStats = `  +${file.added} -${file.deleted}`
+      const filePath = file.path
 
       if (state.fileCursorIndex === i) {
-        let content = maxFileLen > 0 ? truncate(fileLine, maxFileLen) : ''
-        content = highlightReversed(content, expandedHighlight)
+        const highlightedPath = highlightReversed(filePath, expandedHighlight)
+        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${fileStats}`, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
         lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
       } else {
-        let content = maxFileLen > 0 ? truncate(fileLine, maxFileLen) : ''
-        if (expandedHighlight !== null && maxFileLen > 0) {
-          content = highlight(content, expandedHighlight)
-        }
+        const highlightedPath = expandedHighlight !== null && maxFileLen > 0
+          ? highlight(filePath, expandedHighlight)
+          : filePath
+        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${fileStats}`, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
         lines.push(rendered)
       }

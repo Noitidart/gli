@@ -101,10 +101,10 @@ Search scope is determined when you press `/` or `?`:
   - `/b` — also search body text
   - `/f` — search file paths only (no subject/SHA/branch)
 
-- **Expanded scope** (commit already expanded): searches all fields within the expanded commit. `n`/`N` wraps within. Cleared when collapsing or navigating away. Starting a search while expanded clears any active list search.
+- **Expanded scope** (commit already expanded): searches subject, body text, and file paths within the expanded commit. `n`/`N` wraps within. Cleared when collapsing or navigating away. Starting a search while expanded clears any active list search.
   - `/b` has no effect as body already included.
   - `/f` works as normal, narrows to files only.
-  - Matches in non-navigable areas (author, date, body, etc) are only accessible via `n`/`N` and navigating navigates to navigable areas only following same rules.
+  - Matches in non-navigable areas (body, etc) are only accessible via `n`/`N` and navigating navigates to navigable areas only following same rules.
 
 ### Restarting search
 
