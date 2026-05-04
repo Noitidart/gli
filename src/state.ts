@@ -455,17 +455,13 @@ function restoreBodySearchExpanded(state: UiState, commitIndex: number): UiState
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, false)
   if (expandedMatches.length === 0) return state
 
-  const subjectIdx = expandedMatches.findIndex(m => m.type === 'subject')
-  const activeIndex = subjectIdx !== -1 ? subjectIdx : -1
-
   return {
     ...state,
-    fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, state.fileCursorIndex),
     search: {
       ...s,
       scope: 'expanded',
       expandedMatches,
-      activeIndex,
+      activeIndex: -1,
     },
   }
 }
@@ -482,17 +478,13 @@ function restoreFileSearchExpanded(state: UiState, commitIndex: number): UiState
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, true)
   if (expandedMatches.length === 0) return state
 
-  const firstFileIdx = expandedMatches.findIndex(m => m.type === 'file')
-  const activeIndex = firstFileIdx !== -1 ? firstFileIdx : -1
-
   return {
     ...state,
-    fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, state.fileCursorIndex),
     search: {
       ...s,
       scope: 'expanded',
       expandedMatches,
-      activeIndex,
+      activeIndex: -1,
     },
   }
 }
@@ -582,7 +574,7 @@ function enterFileCursor(state: UiState): UiState {
     search: preserveListSearch(state.search),
   }
 
-  return restoreBodySearchExpanded(base, state.cursorIndex)
+  return restoreFileSearchExpanded(restoreBodySearchExpanded(base, state.cursorIndex), state.cursorIndex)
 }
 
 function exitFileCursor(state: UiState): UiState {
@@ -600,7 +592,11 @@ function exitFileCursor(state: UiState): UiState {
           search: { ...s, activeIndex: subjectIdx !== -1 ? subjectIdx : -1 },
         })
       }
-      return clearSelections({ ...state, expandedIndex: null, fileCursorIndex: null, search: preserveListSearch(state.search) })
+      return clearSelections({
+        ...state,
+        fileCursorIndex: null,
+        search: { ...s, activeIndex: -1 },
+      })
     }
 
     return clearSelections({ ...state, fileCursorIndex: null })
@@ -682,7 +678,7 @@ function clearSearch(): SearchState {
 
 function preserveListSearch(search: SearchState): SearchState {
   if (search.scope === 'list') return search
-  if ((search.searchBody || search.searchFiles) && search.listMatches.length > 0) {
+  if (search.query !== null) {
     return { ...search, scope: 'list', expandedMatches: [], activeIndex: -1 }
   }
   return clearSearch()
