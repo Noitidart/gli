@@ -1508,7 +1508,7 @@ function searchNext(state: UiState): UiState {
 
     const isAutoExpanded = (s.searchBody || s.searchFiles) && s.listMatches.length > 0
 
-    if (isAutoExpanded && s.activeIndex >= 0) {
+    if (isAutoExpanded && s.activeIndex >= -1) {
       const wouldWrap = s.direction === 'forward'
         ? s.activeIndex + 1 >= matches.length
         : s.activeIndex - 1 < 0
@@ -1591,7 +1591,7 @@ function searchPrev(state: UiState): UiState {
 
     const isAutoExpanded = (s.searchBody || s.searchFiles) && s.listMatches.length > 0
 
-    if (isAutoExpanded && s.activeIndex >= 0) {
+    if (isAutoExpanded && s.activeIndex >= -1) {
       const wouldWrap = reverseDir === 'forward'
         ? s.activeIndex + 1 >= matches.length
         : s.activeIndex - 1 < 0
