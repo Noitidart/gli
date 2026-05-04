@@ -22,6 +22,8 @@ export type SearchState = {
   bodyMatchIndices: Set<number>
   searchFiles: boolean
   fileMatchIndices: Set<number>
+  savedScope: SearchScope | null
+  searchFrom: ExpandedMatch | null
 }
 
 export type UiState = {
@@ -141,6 +143,8 @@ function emptySearch(): SearchState {
     bodyMatchIndices: new Set(),
     searchFiles: false,
     fileMatchIndices: new Set(),
+    savedScope: null,
+    searchFrom: null,
   }
 }
 
@@ -1095,13 +1099,23 @@ function computeExpandedMatches(
 function searchStart(state: UiState, direction: 'forward' | 'backward'): UiState {
   const scope: SearchScope = state.expandedIndex !== null ? 'expanded' : 'list'
 
+  const s = state.search
+  let searchFrom: ExpandedMatch | null = null
+  if (s.scope === 'expanded' && s.activeIndex >= 0) {
+    searchFrom = s.expandedMatches[s.activeIndex] ?? null
+  }
+
   return {
     ...state,
     search: {
-      ...emptySearch(),
+      ...s,
+      savedScope: s.scope,
+      searchFrom,
       scope,
       inputMode: true,
       direction,
+      prompt: '',
+      loadingAll: false,
     },
   }
 }
@@ -1127,11 +1141,7 @@ function searchInput(state: UiState, char: string | null): UiState {
   }
 
   if (state.expandedIndex !== null) {
-    const commit = state.commits[state.expandedIndex]
-    if (commit !== undefined) {
-      const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, searchFiles)
-      return { ...state, search: { ...state.search, prompt: newPrompt, searchFiles, expandedMatches } }
-    }
+    return { ...state, search: { ...state.search, prompt: newPrompt } }
   }
 
   return { ...state, search: { ...state.search, prompt: newPrompt } }
@@ -1280,18 +1290,19 @@ function searchConfirm(state: UiState): UiState {
     return { ...state, search: { ...s, query, searchBody, searchFiles, inputMode: false, highlightsVisible: true, activeIndex: -1 } }
   }
 
-  const matches = s.expandedMatches
+  const commit = state.expandedIndex !== null ? state.commits[state.expandedIndex] : undefined
+  const matches = commit !== undefined ? computeExpandedMatches(commit, pattern, ignoreCase, searchFiles) : []
   if (matches.length > 0) {
-    const activeIndex = resolveExpandedStartIndex(matches, state.fileCursorIndex, s.direction)
+    const activeIndex = resolveExpandedFromPosition(matches, s.searchFrom, s.direction)
 
     return {
       ...state,
-      search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex, highlightsVisible: true },
+      search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex, highlightsVisible: true, expandedMatches: matches, searchFrom: null },
       fileCursorIndex: applyExpandedMatchFileCursor(matches, activeIndex, state.fileCursorIndex),
     }
   }
 
-  return { ...state, search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex: -1, highlightsVisible: true } }
+  return { ...state, search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex: -1, highlightsVisible: true, expandedMatches: matches, searchFrom: null } }
 }
 
 function searchCancel(state: UiState): UiState {
@@ -1299,7 +1310,62 @@ function searchCancel(state: UiState): UiState {
     return { ...state, search: { ...emptySearch() } }
   }
 
-  return { ...state, search: { ...state.search, inputMode: false, prompt: '' } }
+  const s = state.search
+  if (s.savedScope !== null) {
+    const targetScope = s.savedScope
+    const { pattern, ignoreCase, searchBody, searchFiles } = parseCaseFlags(s.query!)
+
+    if (targetScope === 'list') {
+      const { matches: listMatches, bodyMatchIndices, fileMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, searchBody, searchFiles)
+      const activeIndex = listMatches.length > 0
+        ? resolveListActiveIndex(listMatches, state.cursorIndex, s.direction)
+        : -1
+
+      return {
+        ...state,
+        search: {
+          ...s,
+          savedScope: null,
+          searchFrom: null,
+          scope: 'list',
+          listMatches,
+          bodyMatchIndices,
+          fileMatchIndices,
+          expandedMatches: [],
+          activeIndex,
+          inputMode: false,
+          prompt: '',
+        },
+      }
+    }
+
+    if (state.expandedIndex !== null) {
+      const commit = state.commits[state.expandedIndex]
+      if (commit !== undefined) {
+        const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, searchFiles)
+        const activeIndex = expandedMatches.length > 0
+          ? resolveExpandedStartIndex(expandedMatches, state.fileCursorIndex, s.direction)
+          : -1
+
+        return {
+          ...state,
+          search: {
+            ...s,
+            savedScope: null,
+            searchFrom: null,
+            scope: 'expanded',
+            expandedMatches,
+            activeIndex,
+            inputMode: false,
+            prompt: '',
+          },
+          fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, state.fileCursorIndex),
+        }
+      }
+    }
+  }
+
+  return { ...state, search: { ...state.search, searchFrom: null, inputMode: false, prompt: '' } }
 }
 
 function exitFileCursorIfSubjectMatch(
@@ -1657,6 +1723,42 @@ function isExpandedMatchBeforeIndex(match: ExpandedMatch, fileCursorIndex: numbe
 function isExpandedMatchAfterIndex(match: ExpandedMatch, fileCursorIndex: number): boolean {
   if (match.type === 'file') return match.index > fileCursorIndex
   return false
+}
+
+function resolveExpandedFromPosition(
+  matches: ExpandedMatch[],
+  position: ExpandedMatch | null,
+  direction: 'forward' | 'backward',
+): number {
+  if (position === null || matches.length === 0) return 0
+
+  if (direction === 'forward') {
+    for (let i = 0; i < matches.length; i++) {
+      const m = matches[i]
+      if (m !== undefined && isMatchAfterPosition(m, position)) return i
+    }
+    return 0
+  }
+
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const m = matches[i]
+    if (m !== undefined && isMatchBeforePosition(m, position)) return i
+  }
+  return matches.length - 1
+}
+
+const TYPE_ORDER: Record<ExpandedMatch['type'], number> = { subject: 0, body: 1, file: 2 }
+
+function isMatchAfterPosition(match: ExpandedMatch, pos: ExpandedMatch): boolean {
+  if (match.type === 'body' && pos.type === 'body') return match.line > pos.line
+  if (match.type === 'file' && pos.type === 'file') return match.index > pos.index
+  return TYPE_ORDER[match.type] > TYPE_ORDER[pos.type]
+}
+
+function isMatchBeforePosition(match: ExpandedMatch, pos: ExpandedMatch): boolean {
+  if (match.type === 'body' && pos.type === 'body') return match.line < pos.line
+  if (match.type === 'file' && pos.type === 'file') return match.index < pos.index
+  return TYPE_ORDER[match.type] < TYPE_ORDER[pos.type]
 }
 
 function applyExpandedMatchFileCursor(
