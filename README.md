@@ -1,5 +1,19 @@
 # gli
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Noitidart/gli/master/install.sh | sh
+```
+
+Requires [Node.js](https://nodejs.org) and [git](https://git-scm.com).
+
+To uninstall:
+
+```sh
+npm uninstall -g gli
+```
+
 ## Dev
 
 ```sh
