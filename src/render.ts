@@ -198,7 +198,7 @@ function renderFoldedCommit(
     ? (isCursorLine ? '▼' : '\x1b[33m▼\x1b[0m')
     : ' '
 
-  const overhead = 2 * numWidth + shaWidth + branchWidth + 11
+  const overhead = 2 * numWidth + shaWidth + branchWidth + 12
   const maxMsgLen = termWidth - overhead
   const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
 
