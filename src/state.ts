@@ -111,7 +111,7 @@ export function createInitialState(
     cursorIndex: 0,
     scrollOffset: 0,
     expandedIndex: null,
-    termHeight,
+    termHeight: termHeight - 1,
     termWidth,
     hasMore,
     totalCommits,
@@ -553,15 +553,16 @@ function toggleExpand(state: UiState): UiState {
 }
 
 function resize(state: UiState, height: number, width: number): UiState {
+  const effectiveHeight = height - 1
   const newOffset = clampScroll(
     state.cursorIndex,
-    height,
+    effectiveHeight,
     state.scrollOffset,
   )
 
   return {
     ...state,
-    termHeight: height,
+    termHeight: effectiveHeight,
     termWidth: width,
     scrollOffset: newOffset,
   }

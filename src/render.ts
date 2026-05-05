@@ -14,8 +14,7 @@ export function tickSpinner(): void {
 export function render(state: UiState): string {
   const lines: string[] = []
 
-  const reserved = 1
-  const effectiveHeight = state.termHeight - reserved
+  const effectiveHeight = state.termHeight
   const maxLineNum = state.scrollOffset + effectiveHeight
   const numWidth = Math.max(3, String(maxLineNum).length)
   const shaWidth = 7
@@ -68,6 +67,10 @@ export function render(state: UiState): string {
     }
 
     commitIndex++
+  }
+
+  while (lines.length < effectiveHeight) {
+    lines.push('')
   }
 
   if (state.pendingMarkJump !== null) {
