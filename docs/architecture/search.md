@@ -68,8 +68,8 @@ When `n`/`N` navigates to a commit that has a body match:
 1. **Auto-expand** the commit
 2. **Compute expanded matches** for that commit (subject, body, files)
 3. **Navigate to the first relevant match**:
-   - If the subject also matches → land on subject line first; next `n` moves into body matches
-   - If only body matches → land directly on the first body match line
+   - `n` (forward): lands on the first match (subject if it matches, otherwise first body/file match)
+   - `N` (backward): lands on the last match (last body/file match), so the user sees the deep match first
 4. Continue through all body matches within the expanded commit
 5. **Auto-fold** when all matches in this commit are exhausted and `n`/`N` moves to the next commit
 
@@ -106,12 +106,15 @@ Once the cursor leaves the body line (via `j` or `k`), the body match drops from
 User types: /fix/b
 Matches: commit 3 (body), commit 7 (subject), commit 12 (body + subject)
 
-n → Jump to commit 3, auto-expand, cursor on body match line
+n → Jump to commit 3, auto-expand, cursor on first match (body line)
 n → Next body match in commit 3 (or fold + jump to commit 7 if only one)
 n → Auto-fold commit 3, jump to commit 7, expand, land on subject (no body match here)
-n → Auto-fold commit 7, jump to commit 12, expand, land on subject
+n → Auto-fold commit 7, jump to commit 12, expand, land on subject (first match, forward)
 n → Move to body match in commit 12
 n → Auto-fold commit 12, wrap to commit 3...
+
+N (from commit 12, expanded on body match) → Auto-fold, jump to commit 7, land on subject
+N → Auto-fold commit 7, jump to commit 3, auto-expand, land on LAST match (body line)
 
 After h (fold) on commit 3:
 n → Re-expand commit 3, cursor on body match line (doesn't skip to commit 7)
@@ -189,3 +192,15 @@ If the expanded matches include body or subject matches, `h` from a file-match l
 ## Status Bar
 
 When search is active (input mode or confirmed with highlights visible), a status bar occupies the bottom row of the screen. During input it shows the prompt (`/` or `?` plus typed text) in reverse-video. After confirm it shows match count (`match 3 of 12`) or `No matches`. The content area shrinks by one row to make room.
+
+### Match count
+
+The count reflects **matching lines**, not matching commits.
+
+- **List search** (no `/b` or `/f`): each matching commit counts as 1 (the subject line matches).
+- **Body search** (`/b`): each matching line is counted — subject line plus each body line that matches. A commit with a subject match and 3 body lines matching contributes 4 to the total.
+- **File search** (`/f`): each matching file path is counted.
+
+When navigating with `n`/`N`, the position increments through each individual match line, not per commit. Auto-expanding into a commit steps through its internal matches one by one, each incrementing the position.
+
+The count is anchored to the scope where the search was started (`originScope`). A list-started search always shows the list-level total, even when auto-expanded into a commit. Only a search started inside an expanded commit shows the expanded-level count (matches within that commit only).
