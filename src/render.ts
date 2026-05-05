@@ -1,5 +1,5 @@
 import type { UiState } from './state.js'
-import { formatBranches, parseCaseFlags } from './state.js'
+import { formatBranches, parseCaseFlags, wordWrap } from './state.js'
 import type { Commit, FileStat } from './git.js'
 
 type HighlightInfo = { pattern: string; ignoreCase: boolean }
@@ -53,7 +53,7 @@ export function render(state: UiState): string {
         displayLine++
       }
     } else {
-      const line = renderFoldedCommit(
+      const foldedLines = renderFoldedCommit(
         state,
         commit,
         commitIndex,
@@ -62,8 +62,15 @@ export function render(state: UiState): string {
         branchWidth,
         state.termWidth,
       )
-      lines.push(line)
-      displayLine++
+
+      if (displayLine + foldedLines.length > effectiveHeight) {
+        break
+      }
+
+      for (let j = 0; j < foldedLines.length; j++) {
+        lines.push(foldedLines[j] ?? '')
+        displayLine++
+      }
     }
 
     commitIndex++
@@ -192,7 +199,7 @@ function renderFoldedCommit(
   shaWidth: number,
   branchWidth: number,
   termWidth: number,
-): string {
+): string[] {
   const lineNum = index + 1
   const relNum = index === state.cursorIndex ? lineNum : Math.abs(index - state.cursorIndex)
   const relStr = String(relNum).padStart(numWidth)
@@ -226,10 +233,11 @@ function renderFoldedCommit(
 
   const overhead = 2 * numWidth + shaWidth + branchWidth + 12
   const maxMsgLen = termWidth - overhead
-  const message = maxMsgLen > 0 ? truncate(commit.message, maxMsgLen) : ''
+  const messageSegments = maxMsgLen > 0 ? wordWrap(commit.message, maxMsgLen) : ['']
 
   const lineNumPrefix = `${bodyInd} ${relStr} ${dot} ${numStr}  `
   const headerPrefix = `${sha}  ${branchStr}  `
+  const contIndent = ' '.repeat(overhead)
 
   let highlightInfo: HighlightInfo | null = null
   let highlightScope: 'list' | 'expanded' | null = null
@@ -249,23 +257,35 @@ function renderFoldedCommit(
     }
   }
 
-  const prefixPart = lineNumPrefix
+  const result: string[] = []
+  const firstMsg = messageSegments[0] ?? ''
 
   if (isCursorLine) {
-    const msgHighlighted = highlightReversed(message, highlightInfo)
     if (highlightScope === 'expanded') {
-      const lineHighlighted = prefixPart + headerPrefix + msgHighlighted
-      return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
+      const msgH = highlightReversed(firstMsg, highlightInfo)
+      result.push(`\x1b[7m${(lineNumPrefix + headerPrefix + msgH).padEnd(termWidth)}\x1b[0m`)
+    } else {
+      const contentH = highlightReversed(headerPrefix + firstMsg, highlightInfo)
+      result.push(`\x1b[7m${(lineNumPrefix + contentH).padEnd(termWidth)}\x1b[0m`)
     }
-    const contentHighlighted = highlightReversed(headerPrefix + message, highlightInfo)
-    const lineHighlighted = prefixPart + contentHighlighted
-    return `\x1b[7m${lineHighlighted.padEnd(termWidth)}\x1b[0m`
+
+    for (let i = 1; i < messageSegments.length; i++) {
+      const msgH = highlightReversed(messageSegments[i]!, highlightInfo)
+      result.push(`\x1b[7m${(contIndent + msgH).padEnd(termWidth)}\x1b[0m`)
+    }
+  } else {
+    if (highlightScope === 'expanded') {
+      result.push(lineNumPrefix + headerPrefix + highlight(firstMsg, highlightInfo))
+    } else {
+      result.push(lineNumPrefix + highlight(headerPrefix + firstMsg, highlightInfo))
+    }
+
+    for (let i = 1; i < messageSegments.length; i++) {
+      result.push(contIndent + highlight(messageSegments[i]!, highlightInfo))
+    }
   }
 
-  if (highlightScope === 'expanded') {
-    return prefixPart + headerPrefix + highlight(message, highlightInfo)
-  }
-  return prefixPart + highlight(headerPrefix + message, highlightInfo)
+  return result
 }
 
 function renderExpandedCommit(
@@ -280,7 +300,8 @@ function renderExpandedCommit(
 ): string[] {
   const lines: string[] = []
 
-  lines.push(renderFoldedCommit(state, commit, index, numWidth, shaWidth, branchWidth, termWidth))
+  const headerLines = renderFoldedCommit(state, commit, index, numWidth, shaWidth, branchWidth, termWidth)
+  for (const l of headerLines) lines.push(l)
 
   lines.push(truncate(`${indent}Author: ${commit.author}    ${commit.date}`, termWidth))
 

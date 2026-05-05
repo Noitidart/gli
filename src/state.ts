@@ -1,5 +1,142 @@
 import type { Commit, FileStat } from './git.js'
 
+export function wordWrap(text: string, maxLen: number): string[] {
+  if (text.length === 0) return ['']
+  if (text.length <= maxLen) return [text]
+
+  const lines: string[] = []
+  let currentLine = ''
+  let i = 0
+  const len = text.length
+
+  while (i < len) {
+    while (i < len && text[i] === ' ') i++
+    if (i >= len) break
+
+    const wordStart = i
+    while (i < len && text[i] !== ' ') i++
+    const word = text.slice(wordStart, i)
+
+    if (currentLine.length === 0) {
+      currentLine = word
+    } else if (currentLine.length + 1 + word.length <= maxLen) {
+      currentLine += ' ' + word
+    } else {
+      lines.push(currentLine)
+      currentLine = word
+    }
+  }
+
+  if (currentLine.length > 0 || lines.length === 0) {
+    lines.push(currentLine)
+  }
+
+  return lines
+}
+
+function getMaxMsgLen(state: UiState): number {
+  const maxLineNum = state.scrollOffset + state.termHeight
+  const numWidth = Math.max(3, String(maxLineNum).length)
+  const shaWidth = 7
+  const overhead = 2 * numWidth + shaWidth + state.branchColWidth + 12
+  return state.termWidth - overhead
+}
+
+function commitDisplayHeight(commits: Commit[], index: number, maxMsgLen: number): number {
+  const commit = commits[index]
+  if (commit === undefined) return 1
+  if (maxMsgLen <= 0) return 1
+  return wordWrap(commit.message, maxMsgLen).length
+}
+
+function clampScrollOffset(state: UiState, cursorIndex: number): number {
+  if (cursorIndex < state.scrollOffset) return cursorIndex
+
+  const maxMsgLen = getMaxMsgLen(state)
+  const { commits, termHeight, scrollOffset } = state
+
+  let displayLines = 0
+  for (let i = scrollOffset; i <= cursorIndex && i < commits.length; i++) {
+    displayLines += commitDisplayHeight(commits, i, maxMsgLen)
+  }
+
+  if (displayLines <= termHeight) return scrollOffset
+
+  let newOffset = scrollOffset
+  let totalLines = displayLines
+  while (newOffset < cursorIndex) {
+    totalLines -= commitDisplayHeight(commits, newOffset, maxMsgLen)
+    newOffset++
+    if (totalLines <= termHeight) break
+  }
+
+  return newOffset
+}
+
+function scrollToTarget(state: UiState, targetIndex: number): number {
+  if (targetIndex < state.scrollOffset) return targetIndex
+
+  const maxMsgLen = getMaxMsgLen(state)
+  const { commits, termHeight, scrollOffset } = state
+
+  let displayLines = 0
+  for (let i = scrollOffset; i <= targetIndex && i < commits.length; i++) {
+    displayLines += commitDisplayHeight(commits, i, maxMsgLen)
+  }
+
+  if (displayLines <= termHeight) return scrollOffset
+
+  return targetIndex
+}
+
+function pageDownNewOffset(state: UiState): number {
+  const maxMsgLen = getMaxMsgLen(state)
+  const { commits, termHeight, scrollOffset } = state
+
+  let displayLines = 0
+  let offset = scrollOffset
+
+  while (offset < commits.length) {
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+    offset++
+    if (displayLines >= termHeight - 2) break
+  }
+
+  return Math.min(offset, Math.max(0, commits.length - 1))
+}
+
+function pageUpNewOffset(state: UiState): number {
+  const maxMsgLen = getMaxMsgLen(state)
+  const { commits, termHeight, scrollOffset } = state
+
+  let displayLines = 0
+  let offset = scrollOffset
+
+  while (offset > 0) {
+    offset--
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+    if (displayLines >= termHeight - 2) break
+  }
+
+  return Math.max(0, offset)
+}
+
+function jumpCenterOffset(state: UiState, targetIndex: number): number {
+  const maxMsgLen = getMaxMsgLen(state)
+  const { commits, termHeight } = state
+  const halfHeight = Math.floor(termHeight / 2)
+
+  let displayLines = commitDisplayHeight(commits, targetIndex, maxMsgLen)
+  let offset = targetIndex
+
+  while (offset > 0 && displayLines < halfHeight) {
+    offset--
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+  }
+
+  return offset
+}
+
 export type ExpandedMatch =
   | { type: 'subject' }
   | { type: 'body'; line: number }
@@ -108,7 +245,7 @@ export function createInitialState(
   branchTips: Map<string, string[]>,
   unpushedShas: Set<string>,
 ): UiState {
-  const branchColWidth = computeBranchColWidth(branchTips)
+  const branchColWidth = computeBranchColWidth(branchTips, commits)
 
   return {
     commits,
@@ -303,11 +440,7 @@ function moveDown(state: UiState): UiState {
   }
 
   const newCursor = state.cursorIndex + 1
-  let newOffset = state.scrollOffset
-
-  if (newCursor >= state.scrollOffset + state.termHeight) {
-    newOffset = newCursor - state.termHeight + 1
-  }
+  const newOffset = clampScrollOffset(state, newCursor)
 
   return {
     ...state,
@@ -340,11 +473,7 @@ function moveUp(state: UiState): UiState {
   }
 
   const newCursor = state.cursorIndex - 1
-  let newOffset = state.scrollOffset
-
-  if (newCursor < state.scrollOffset) {
-    newOffset = newCursor
-  }
+  const newOffset = clampScrollOffset(state, newCursor)
 
   return {
     ...state,
@@ -361,9 +490,8 @@ function pageDown(state: UiState): UiState {
   }
 
   const maxIndex = state.commits.length - 1
-  const maxOffset = Math.max(0, maxIndex - state.termHeight + 1)
-  const newOffset = Math.min(state.scrollOffset + state.termHeight - 2, maxOffset)
-  const newCursor = newOffset === maxOffset ? maxIndex : Math.min(newOffset, maxIndex)
+  const newOffset = pageDownNewOffset(state)
+  const newCursor = newOffset >= maxIndex ? maxIndex : Math.min(newOffset, maxIndex)
 
   if (newCursor === maxIndex && state.hasMore && !state.loadingMore) {
     const keepExpanded = state.expandedIndex === newCursor
@@ -394,7 +522,7 @@ function pageUp(state: UiState): UiState {
     return pageUp(clearSelections({ ...state, fileCursorIndex: null }))
   }
 
-  const newOffset = Math.max(state.scrollOffset - state.termHeight + 2, 0)
+  const newOffset = pageUpNewOffset(state)
   const newCursor = newOffset
   const keepExpanded = state.expandedIndex === newCursor
 
@@ -556,16 +684,11 @@ function toggleExpand(state: UiState): UiState {
 
 function resize(state: UiState, height: number, width: number): UiState {
   const effectiveHeight = height - 1
-  const newOffset = clampScroll(
-    state.cursorIndex,
-    effectiveHeight,
-    state.scrollOffset,
-  )
+  const updated = { ...state, termHeight: effectiveHeight, termWidth: width }
+  const newOffset = clampScrollOffset(updated, state.cursorIndex)
 
   return {
-    ...state,
-    termHeight: effectiveHeight,
-    termWidth: width,
+    ...updated,
     scrollOffset: newOffset,
   }
 }
@@ -664,11 +787,15 @@ function commitsLoaded(
   total: number,
   hasMore: boolean,
 ): UiState {
+  const commits = [...state.commits, ...newCommits]
+  const branchColWidth = computeBranchColWidth(state.branchTips, commits)
+
   return {
     ...state,
-    commits: [...state.commits, ...newCommits],
+    commits,
     totalCommits: total,
     hasMore,
+    branchColWidth,
   }
 }
 
@@ -688,20 +815,6 @@ function detailLoaded(
   return { ...state, commits }
 }
 
-function clampScroll(
-  cursorIndex: number,
-  termHeight: number,
-  currentOffset: number,
-): number {
-  if (cursorIndex < currentOffset) {
-    return cursorIndex
-  }
-  if (cursorIndex >= currentOffset + termHeight) {
-    return cursorIndex - termHeight + 1
-  }
-  return currentOffset
-}
-
 export function formatBranches(branches: string[] | undefined): string {
   if (branches === undefined || branches.length === 0) {
     return ''
@@ -709,17 +822,19 @@ export function formatBranches(branches: string[] | undefined): string {
   return `<${branches.join(', ')}>`
 }
 
-function computeBranchColWidth(branchTips: Map<string, string[]>): number {
+function computeBranchColWidth(branchTips: Map<string, string[]>, commits: Commit[]): number {
   let maxWidth = 0
+  const shas = new Set(commits.map(c => c.shortSha))
 
-  for (const branches of branchTips.values()) {
+  for (const [sha, branches] of branchTips) {
+    if (!shas.has(sha)) continue
     const text = formatBranches(branches)
     if (text.length > maxWidth) {
       maxWidth = text.length
     }
   }
 
-  return Math.max(1, maxWidth)
+  return Math.max(24, maxWidth)
 }
 
 function clearSelections(state: UiState): UiState {
@@ -872,20 +987,12 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
     return {
       ...raw,
       cursorIndex: maxIndex,
-      scrollOffset: maxIndex >= raw.scrollOffset + raw.termHeight
-        ? maxIndex - raw.termHeight + 1
-        : raw.scrollOffset,
+      scrollOffset: scrollToTarget(raw, maxIndex),
       loadingMore: true,
     }
   }
 
-  let newOffset = raw.scrollOffset
-
-  if (newCursor < raw.scrollOffset) {
-    newOffset = newCursor
-  } else if (newCursor >= raw.scrollOffset + raw.termHeight) {
-    newOffset = newCursor - raw.termHeight + 1
-  }
+  const newOffset = clampScrollOffset(raw, newCursor)
 
   return {
     ...raw,
@@ -948,7 +1055,7 @@ function jumpPrevious(state: UiState): UiState {
   const targetIndex = newStack.pop()
   if (targetIndex === undefined || targetIndex === state.cursorIndex) return state
 
-  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+  const newOffset = jumpCenterOffset(state, targetIndex)
 
   return clearSelections({
     ...state,
@@ -968,7 +1075,7 @@ function jumpBack(state: UiState): UiState {
   const targetIndex = newStack.pop()
   if (targetIndex === undefined) return state
 
-  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+  const newOffset = jumpCenterOffset(state, targetIndex)
 
   return clearSelections({
     ...state,
@@ -989,7 +1096,7 @@ function jumpForward(state: UiState): UiState {
   const targetIndex = newForward.pop()
   if (targetIndex === undefined) return state
 
-  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+  const newOffset = jumpCenterOffset(state, targetIndex)
 
   return clearSelections({
     ...state,
@@ -1270,9 +1377,7 @@ function navigateToBodyMatch(
   const commit = state.commits[targetIndex]
   if (commit === undefined) return state
 
-  const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
-    ? targetIndex
-    : state.scrollOffset
+  const newOffset = scrollToTarget(state, targetIndex)
 
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, false)
   const activeIndex = resolveExpandedStartIndex(expandedMatches, null, direction ?? s.direction)
@@ -1311,9 +1416,7 @@ function navigateToFileMatch(
   const commit = state.commits[targetIndex]
   if (commit === undefined) return state
 
-  const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
-    ? targetIndex
-    : state.scrollOffset
+  const newOffset = scrollToTarget(state, targetIndex)
 
   const expandedMatches = computeExpandedMatches(commit, pattern, ignoreCase, searchFiles)
   const activeIndex = resolveExpandedStartIndex(expandedMatches, null, direction ?? s.direction)
@@ -1987,7 +2090,7 @@ function cancelPendingMarkJump(state: UiState): UiState {
 }
 
 function applyJump(state: UiState, targetIndex: number): UiState {
-  const newOffset = Math.max(0, targetIndex - Math.floor(state.termHeight / 2))
+  const newOffset = jumpCenterOffset(state, targetIndex)
 
   return clearSelections({
     ...state,
