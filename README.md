@@ -8,7 +8,11 @@ curl -fsSL https://raw.githubusercontent.com/Noitidart/gli/master/install.sh | s
 
 Requires [Node.js](https://nodejs.org) and [git](https://git-scm.com).
 
-To uninstall:
+### Update
+
+Re-run the install command above. It safely overwrites the previous version.
+
+### Uninstall
 
 ```sh
 npm uninstall -g gli
