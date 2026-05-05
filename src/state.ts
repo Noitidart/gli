@@ -353,13 +353,11 @@ function pageDown(state: UiState): UiState {
   }
 
   const maxIndex = state.commits.length - 1
-  const newCursor = Math.min(
-    state.cursorIndex + state.termHeight,
-    maxIndex,
-  )
+  const maxOffset = Math.max(0, maxIndex - state.termHeight + 1)
+  const newOffset = Math.min(state.scrollOffset + state.termHeight - 2, maxOffset)
+  const newCursor = newOffset === maxOffset ? maxIndex : Math.min(newOffset, maxIndex)
 
   if (newCursor === maxIndex && state.hasMore && !state.loadingMore) {
-    const newOffset = Math.max(0, newCursor - state.termHeight + 1)
     const keepExpanded = state.expandedIndex === newCursor
 
     return clearSelections({
@@ -372,7 +370,6 @@ function pageDown(state: UiState): UiState {
     })
   }
 
-  const newOffset = Math.max(0, newCursor - state.termHeight + 1)
   const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
@@ -389,11 +386,8 @@ function pageUp(state: UiState): UiState {
     return pageUp(clearSelections({ ...state, fileCursorIndex: null }))
   }
 
-  const newCursor = Math.max(
-    state.cursorIndex - state.termHeight,
-    0,
-  )
-  const newOffset = Math.max(newCursor, 0)
+  const newOffset = Math.max(state.scrollOffset - state.termHeight + 2, 0)
+  const newCursor = newOffset
   const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
