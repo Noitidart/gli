@@ -63,7 +63,9 @@ Body matches follow the same "don't skip the current commit" pattern as the list
 
 #### Auto-expand on landing
 
-When `n`/`N` navigates to a commit that has a body match:
+Auto-expand only happens when the target commit has body or file matches (tracked in `bodyMatchIndices`/`fileMatchIndices`). This means a commit that matches via both subject **and** body will auto-expand when `n`/`N` lands on it — even though the landing position may be the subject line (forward), the commit expands so the user can continue into the body matches. A commit that matches via subject only is **not** auto-expanded — `n`/`N` just moves the cursor to it. The user can manually expand with `l`/`zo`/`Enter`.
+
+When `n`/`N` navigates to a commit that has a body/file match:
 
 1. **Auto-expand** the commit
 2. **Compute expanded matches** for that commit (subject, body, files)

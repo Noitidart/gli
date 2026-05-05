@@ -117,7 +117,9 @@ Pressing `/` or `?` while a search is active begins a new search prompt. The old
 
 `n`/`N` find the next/previous match relative to the current position. If the current line is itself a match, search lands on it rather than skipping to the next. Matching is line-wise — even if a line has multiple matched words, it counts as one match position. Hitting `n` again moves to the next line.
 
-With body/file matches from list scope (`/b` & `/f` flags): matching commits auto-expand and the cursor lands on the match line.
+With body/file matches from list scope (`/b` & `/f` flags): matching commits auto-expand and the cursor lands on the match line. Subject-only matches do not auto-expand.
+
+When a commit has matches in both the subject and body (or files), `n` auto-expands on the subject line so you can peek into the deeper matches. Going the other direction, `N` from a body/file match lands on the subject without auto-folding — the commit stays expanded.
 
 If you fold a commit that still has unvisited body/file matches, `n`/`N` re-expands it instead of skipping.
 
