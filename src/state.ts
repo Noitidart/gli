@@ -42,22 +42,35 @@ function getMaxMsgLen(state: UiState): number {
   return state.termWidth - overhead
 }
 
-function commitDisplayHeight(commits: Commit[], index: number, maxMsgLen: number): number {
+function commitDisplayHeight(
+  commits: Commit[],
+  index: number,
+  maxMsgLen: number,
+  branchTips: Map<string, string[]>,
+  branchWidth: number,
+): number {
   const commit = commits[index]
   if (commit === undefined) return 1
-  if (maxMsgLen <= 0) return 1
-  return wordWrap(commit.message, maxMsgLen).length
+
+  const branchNames = branchTips.get(commit.shortSha)
+  const branchLines = branchNames !== undefined && branchNames.length > 0
+    ? wrapBranches(branchNames, branchWidth)
+    : ['']
+
+  const subjectLines = maxMsgLen > 0 ? wordWrap(commit.message, maxMsgLen).length : 1
+
+  return branchLines.length + subjectLines - 1
 }
 
 function clampScrollOffset(state: UiState, cursorIndex: number): number {
   if (cursorIndex < state.scrollOffset) return cursorIndex
 
   const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset } = state
+  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
 
   let displayLines = 0
   for (let i = scrollOffset; i <= cursorIndex && i < commits.length; i++) {
-    displayLines += commitDisplayHeight(commits, i, maxMsgLen)
+    displayLines += commitDisplayHeight(commits, i, maxMsgLen, branchTips, branchColWidth)
   }
 
   if (displayLines <= termHeight) return scrollOffset
@@ -65,7 +78,7 @@ function clampScrollOffset(state: UiState, cursorIndex: number): number {
   let newOffset = scrollOffset
   let totalLines = displayLines
   while (newOffset < cursorIndex) {
-    totalLines -= commitDisplayHeight(commits, newOffset, maxMsgLen)
+    totalLines -= commitDisplayHeight(commits, newOffset, maxMsgLen, branchTips, branchColWidth)
     newOffset++
     if (totalLines <= termHeight) break
   }
@@ -77,11 +90,11 @@ function scrollToTarget(state: UiState, targetIndex: number): number {
   if (targetIndex < state.scrollOffset) return targetIndex
 
   const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset } = state
+  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
 
   let displayLines = 0
   for (let i = scrollOffset; i <= targetIndex && i < commits.length; i++) {
-    displayLines += commitDisplayHeight(commits, i, maxMsgLen)
+    displayLines += commitDisplayHeight(commits, i, maxMsgLen, branchTips, branchColWidth)
   }
 
   if (displayLines <= termHeight) return scrollOffset
@@ -91,13 +104,13 @@ function scrollToTarget(state: UiState, targetIndex: number): number {
 
 function pageDownNewOffset(state: UiState): number {
   const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset } = state
+  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
 
   let displayLines = 0
   let offset = scrollOffset
 
   while (offset < commits.length) {
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
     offset++
     if (displayLines >= termHeight - 2) break
   }
@@ -107,14 +120,14 @@ function pageDownNewOffset(state: UiState): number {
 
 function pageUpNewOffset(state: UiState): number {
   const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset } = state
+  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
 
   let displayLines = 0
   let offset = scrollOffset
 
   while (offset > 0) {
     offset--
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
     if (displayLines >= termHeight - 2) break
   }
 
@@ -123,15 +136,15 @@ function pageUpNewOffset(state: UiState): number {
 
 function jumpCenterOffset(state: UiState, targetIndex: number): number {
   const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight } = state
+  const { commits, termHeight, branchTips, branchColWidth } = state
   const halfHeight = Math.floor(termHeight / 2)
 
-  let displayLines = commitDisplayHeight(commits, targetIndex, maxMsgLen)
+  let displayLines = commitDisplayHeight(commits, targetIndex, maxMsgLen, branchTips, branchColWidth)
   let offset = targetIndex
 
   while (offset > 0 && displayLines < halfHeight) {
     offset--
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen)
+    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
   }
 
   return offset
@@ -822,15 +835,42 @@ export function formatBranches(branches: string[] | undefined): string {
   return `<${branches.join(', ')}>`
 }
 
+export function wrapBranches(branches: string[], maxWidth: number): string[] {
+  if (branches.length === 0) return ['']
+
+  const lines: string[] = []
+  let currentLine = ''
+
+  for (const branch of branches) {
+    const formatted = `<${branch}>`
+    if (currentLine.length === 0) {
+      currentLine = formatted
+    } else if (currentLine.length + 1 + formatted.length <= maxWidth) {
+      currentLine += ' ' + formatted
+    } else {
+      lines.push(currentLine)
+      currentLine = formatted
+    }
+  }
+
+  if (currentLine.length > 0) {
+    lines.push(currentLine)
+  }
+
+  return lines.length > 0 ? lines : ['']
+}
+
 function computeBranchColWidth(branchTips: Map<string, string[]>, commits: Commit[]): number {
   let maxWidth = 0
   const shas = new Set(commits.map(c => c.shortSha))
 
   for (const [sha, branches] of branchTips) {
     if (!shas.has(sha)) continue
-    const text = formatBranches(branches)
-    if (text.length > maxWidth) {
-      maxWidth = text.length
+    for (const branch of branches) {
+      const len = `<${branch}>`.length
+      if (len > maxWidth) {
+        maxWidth = len
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 import type { UiState } from './state.js'
-import { formatBranches, parseCaseFlags, wordWrap } from './state.js'
+import { formatBranches, parseCaseFlags, wordWrap, wrapBranches } from './state.js'
 import type { Commit, FileStat } from './git.js'
 
 type HighlightInfo = { pattern: string; ignoreCase: boolean }
@@ -206,8 +206,10 @@ function renderFoldedCommit(
   const numStr = String(lineNum).padStart(numWidth)
   const sha = commit.shortSha.padEnd(shaWidth)
 
-  const branches = formatBranches(state.branchTips.get(commit.shortSha))
-  const branchStr = branches.padEnd(branchWidth)
+  const branchNames = state.branchTips.get(commit.shortSha)
+  const branchLines = branchNames !== undefined && branchNames.length > 0
+    ? wrapBranches(branchNames, branchWidth)
+    : ['']
 
   const activeNonSubjectMatch = state.search.scope === 'expanded'
     && state.search.highlightsVisible
@@ -231,13 +233,16 @@ function renderFoldedCommit(
     ? (isCursorLine ? '▼' : '\x1b[33m▼\x1b[0m')
     : ' '
 
-  const overhead = 2 * numWidth + shaWidth + branchWidth + 12
+  const lineNumPrefix = `${bodyInd} ${relStr} ${dot} ${numStr}  `
+  const indentToBranch = 2 * numWidth + shaWidth + 10
+  const overhead = indentToBranch + branchWidth + 2
   const maxMsgLen = termWidth - overhead
   const messageSegments = maxMsgLen > 0 ? wordWrap(commit.message, maxMsgLen) : ['']
 
-  const lineNumPrefix = `${bodyInd} ${relStr} ${dot} ${numStr}  `
-  const headerPrefix = `${sha}  ${branchStr}  `
-  const contIndent = ' '.repeat(overhead)
+  const firstBranchStr = branchLines[0]!.padEnd(branchWidth)
+  const headerPrefix = `${sha}  ${firstBranchStr}  `
+  const branchIndent = ' '.repeat(indentToBranch)
+  const subjectIndent = ' '.repeat(overhead)
 
   let highlightInfo: HighlightInfo | null = null
   let highlightScope: 'list' | 'expanded' | null = null
@@ -269,9 +274,13 @@ function renderFoldedCommit(
       result.push(`\x1b[7m${(lineNumPrefix + contentH).padEnd(termWidth)}\x1b[0m`)
     }
 
+    for (let i = 1; i < branchLines.length; i++) {
+      result.push(`\x1b[7m${(branchIndent + branchLines[i]!).padEnd(termWidth)}\x1b[0m`)
+    }
+
     for (let i = 1; i < messageSegments.length; i++) {
       const msgH = highlightReversed(messageSegments[i]!, highlightInfo)
-      result.push(`\x1b[7m${(contIndent + msgH).padEnd(termWidth)}\x1b[0m`)
+      result.push(`\x1b[7m${(subjectIndent + msgH).padEnd(termWidth)}\x1b[0m`)
     }
   } else {
     if (highlightScope === 'expanded') {
@@ -280,8 +289,12 @@ function renderFoldedCommit(
       result.push(lineNumPrefix + highlight(headerPrefix + firstMsg, highlightInfo))
     }
 
+    for (let i = 1; i < branchLines.length; i++) {
+      result.push(branchIndent + highlight(branchLines[i]!, highlightInfo))
+    }
+
     for (let i = 1; i < messageSegments.length; i++) {
-      result.push(contIndent + highlight(messageSegments[i]!, highlightInfo))
+      result.push(subjectIndent + highlight(messageSegments[i]!, highlightInfo))
     }
   }
 
