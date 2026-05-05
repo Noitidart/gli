@@ -125,6 +125,111 @@ gli has ~30 distinct visual states:
 
 Testing transitions between these states with raw ANSI strings means writing assertions against `toContain` and regex on escape-code-laden strings. It's doable but fragile and low-signal. Component-level tests give you precise, refactor-safe assertions on each visual piece independently.
 
+## Line Numbering & Navigation Model
+
+### Absolute Line Numbers
+
+Every row gets a fixed line number that never changes — commit subjects, author rows, date rows, each body line, each file line. All rows are numbered sequentially regardless of visibility.
+
+```
+1  abc1234  <main>  fix: parser bug          ← commit subject (folded)
+   (hidden: line 2 = author)
+   (hidden: line 3 = date)
+   (hidden: line 4 = body line 1)
+   (hidden: line 5 = body line 2)
+   (hidden: line 6 = file: src/parser.ts)
+   (hidden: line 7 = file: src/test.ts)
+8  def5678          add feature               ← next commit (line 8, not 2)
+```
+
+When commit 1 is expanded, lines 2–7 become visible. Commit 8 stays at line 8.
+
+### Folding = Visibility, Not Structure
+
+Folding does not remove rows or renumber anything. A folded commit hides its detail rows. Expanding reveals them. The data model always has all rows; folding is purely a rendering toggle.
+
+This means:
+- Line numbers are stable — they never shift when expanding or collapsing
+- Search matches reference a specific absolute line number that always points to the same row
+- The state model is simpler — no recalculating offsets when expansion changes
+
+### Navigation Semantics
+
+| Command | Behavior |
+|---------|----------|
+| `j` / `k` with count (`3j`, `5k`) | Moves by N **visible** lines. Skips over hidden/collapsed rows. |
+| `{N}G` | Goes to **commit** number N, not absolute line number. |
+| `gg` | Goes to first visible line. In practice always the first commit since nothing can appear above it. |
+| `G` | Goes to last visible line. If the last commit is expanded, goes to its last detail row (last file line, or last body line, etc.). |
+| Relative numbers (displayed) | Visual distance from cursor — only counts visible rows. Like vim's `relativenumber`. |
+
+### Two Numbers Per Row
+
+Each visible row displays two numbers:
+
+1. **Absolute line number** — fixed, for reference. Used by search matches.
+2. **Relative number** — visible-line distance from cursor. Used for `3j`/`5k` mental math.
+
+On the cursor's own row, the relative number shows the commit's absolute line number (like vim's `number` + `relativenumber` behavior).
+
+### Search Matches
+
+Search matches point to an absolute line number. If the matching line belongs to a folded commit, the commit auto-expands to reveal it. The cursor lands on the exact matching line (which could be a subject, body line, or file path).
+
+When a match causes an auto-expand, the fold state of **other** commits is unaffected.
+
+### With Ink
+
+Ink maps naturally to this model because each row is an independent component:
+
+```
+<CommitList>
+  <Row lineNumber={1} relativeNumber={3} visible={true}>
+    <LineNumbers />
+    <CommitSubject />
+  </Row>
+  <Row lineNumber={2} relativeNumber={2} visible={false}>  {/* author */}
+    <LineNumbers />
+    <AuthorDetail />
+  </Row>
+  ...
+  <Row lineNumber={8} relativeNumber={1} visible={true}>
+    <LineNumbers />
+    <CommitSubject />
+  </Row>
+</CommitList>
+```
+
+Key points:
+
+- **Visibility is a prop** — each `<Row>` receives `visible={true/false}`. Hidden rows render nothing (`null`). Ink's reconciliation handles this efficiently — no string building for hidden rows.
+- **Line number column is a component** — `<LineNumbers absolute={1} relative={3} />` renders the two-number column. Testable in isolation. No manual padding math.
+- **No manual scroll/offset math** — instead of computing `scrollOffset` and building a substring of lines, you render all rows and let ink handle which are in the viewport. For performance with thousands of commits, render only the visible window of rows (slice the array based on scroll state).
+- **Folding state is derived** — "is commit N expanded?" is derived from `cursor.line` position or explicit expand action. Not separate state. The `<Row>` components just check if their parent commit is expanded to decide `visible`.
+- **Matches auto-expand** — when a search match lands on a hidden row, the state update sets expansion for that commit. Next render, those rows go from `visible={false}` to `visible={true}`. The cursor moves to the match line. No special rendering logic — it's just a state change that makes hidden rows visible.
+
+Testing this with ink:
+
+```typescript
+// Test: folded commit hides detail rows
+const { lastFrame } = render(
+  <CommitList commits={commits} expandedCommitIndex={null} cursorLine={1} />
+)
+expect(lastFrame()).not.toContain('Author:')
+
+// Test: expanded commit shows detail rows
+const { lastFrame } = render(
+  <CommitList commits={commits} expandedCommitIndex={0} cursorLine={1} />
+)
+expect(lastFrame()).toContain('Author: John Doe')
+
+// Test: search match on hidden body line auto-expands
+const { lastFrame } = render(
+  <CommitList commits={commits} expandedCommitIndex={0} cursorLine={4} />
+)
+expect(lastFrame()).toContain('body line content')  // line 4 was a body line
+```
+
 ## The Tradeoff
 
 - Save ~150-200 lines of terminal/rendering boilerplate
