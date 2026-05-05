@@ -25,6 +25,10 @@ export type SearchState = {
   flagError: string | null
   savedScope: SearchScope | null
   searchFrom: ExpandedMatch | null
+  originScope: SearchScope | null
+  savedOriginScope: SearchScope | null
+  expandedMatchCounts: Map<number, number>
+  totalMatchCount: number
 }
 
 export type UiState = {
@@ -150,6 +154,10 @@ function emptySearch(): SearchState {
     flagError: null,
     savedScope: null,
     searchFrom: null,
+    originScope: null,
+    savedOriginScope: null,
+    expandedMatchCounts: new Map(),
+    totalMatchCount: 0,
   }
 }
 
@@ -1164,6 +1172,38 @@ function computeExpandedMatches(
   return result
 }
 
+function computeExpandedMatchTotals(
+  commits: Commit[],
+  listMatches: number[],
+  bodyMatchIndices: Set<number>,
+  fileMatchIndices: Set<number>,
+  pattern: string,
+  ignoreCase: boolean,
+): { expandedMatchCounts: Map<number, number>; totalMatchCount: number } {
+  const expandedMatchCounts = new Map<number, number>()
+
+  for (const idx of bodyMatchIndices) {
+    const commit = commits[idx]
+    if (commit !== undefined) {
+      expandedMatchCounts.set(idx, computeExpandedMatches(commit, pattern, ignoreCase, false).length)
+    }
+  }
+
+  for (const idx of fileMatchIndices) {
+    const commit = commits[idx]
+    if (commit !== undefined) {
+      expandedMatchCounts.set(idx, computeExpandedMatches(commit, pattern, ignoreCase, true).length)
+    }
+  }
+
+  let totalMatchCount = 0
+  for (const idx of listMatches) {
+    totalMatchCount += expandedMatchCounts.get(idx) ?? 1
+  }
+
+  return { expandedMatchCounts, totalMatchCount }
+}
+
 function searchStart(state: UiState, direction: 'forward' | 'backward'): UiState {
   const scope: SearchScope = state.expandedIndex !== null ? 'expanded' : 'list'
 
@@ -1178,6 +1218,8 @@ function searchStart(state: UiState, direction: 'forward' | 'backward'): UiState
     search: {
       ...s,
       savedScope: s.scope,
+      savedOriginScope: s.originScope,
+      originScope: scope,
       searchFrom,
       scope,
       inputMode: true,
@@ -1198,7 +1240,7 @@ function searchInput(state: UiState, char: string | null): UiState {
   }
 
   if (newPrompt === '') {
-    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [], bodyMatchIndices: new Set(), fileMatchIndices: new Set(), flagError: null } }
+    return { ...state, search: { ...state.search, prompt: '', listMatches: [], expandedMatches: [], bodyMatchIndices: new Set(), fileMatchIndices: new Set(), flagError: null, expandedMatchCounts: new Map(), totalMatchCount: 0 } }
   }
 
   const { pattern, ignoreCase, searchBody, searchFiles, flagError } = parseCaseFlags(newPrompt)
@@ -1242,7 +1284,7 @@ function navigateToBodyMatch(
     expandedIndex: targetIndex,
     fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, null),
     search: {
-      ...s,
+      ...state.search,
       query,
       searchBody,
       scope: 'expanded',
@@ -1283,7 +1325,7 @@ function navigateToFileMatch(
     expandedIndex: targetIndex,
     fileCursorIndex: applyExpandedMatchFileCursor(expandedMatches, activeIndex, null),
     search: {
-      ...s,
+      ...state.search,
       query,
       searchFiles,
       scope: 'expanded',
@@ -1334,13 +1376,23 @@ function searchConfirm(state: UiState): UiState {
       const activeIndex = currentMatchIdx >= 0 ? currentMatchIdx : resolveListActiveIndex(matches, state.cursorIndex, s.direction)
       const targetIndex = matches[activeIndex]
 
+      const totals = (searchBody || searchFiles)
+        ? computeExpandedMatchTotals(state.commits, matches, s.bodyMatchIndices, s.fileMatchIndices, pattern, ignoreCase)
+        : { expandedMatchCounts: new Map<number, number>(), totalMatchCount: matches.length }
+
       if (targetIndex !== undefined) {
         if (searchBody && s.bodyMatchIndices.has(targetIndex)) {
-          return navigateToBodyMatch(state, targetIndex, s, query, searchBody, pattern, ignoreCase)
+          return navigateToBodyMatch(
+            { ...state, search: { ...s, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+            targetIndex, s, query, searchBody, pattern, ignoreCase,
+          )
         }
 
         if (searchFiles && s.fileMatchIndices.has(targetIndex)) {
-          return navigateToFileMatch(state, targetIndex, s, query, searchFiles, pattern, ignoreCase)
+          return navigateToFileMatch(
+            { ...state, search: { ...s, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+            targetIndex, s, query, searchFiles, pattern, ignoreCase,
+          )
         }
 
         const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
@@ -1352,7 +1404,7 @@ function searchConfirm(state: UiState): UiState {
           cursorIndex: targetIndex,
           scrollOffset: newOffset,
           expandedIndex: null,
-          search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex, highlightsVisible: true },
+          search: { ...s, query, searchBody, searchFiles, inputMode: false, activeIndex, highlightsVisible: true, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
           ...withJump(state),
         }
       }
@@ -1392,11 +1444,18 @@ function searchCancel(state: UiState): UiState {
         ? resolveListActiveIndex(listMatches, state.cursorIndex, s.direction)
         : -1
 
+      const originScope = s.savedOriginScope ?? 'list'
+      const totals = (searchBody || searchFiles)
+        ? computeExpandedMatchTotals(state.commits, listMatches, bodyMatchIndices, fileMatchIndices, pattern, ignoreCase)
+        : { expandedMatchCounts: new Map<number, number>(), totalMatchCount: listMatches.length }
+
       return {
         ...state,
         search: {
           ...s,
           savedScope: null,
+          savedOriginScope: null,
+          originScope,
           searchFrom: null,
           scope: 'list',
           listMatches,
@@ -1406,6 +1465,8 @@ function searchCancel(state: UiState): UiState {
           activeIndex,
           inputMode: false,
           prompt: '',
+          expandedMatchCounts: totals.expandedMatchCounts,
+          totalMatchCount: totals.totalMatchCount,
         },
       }
     }
@@ -1423,6 +1484,8 @@ function searchCancel(state: UiState): UiState {
           search: {
             ...s,
             savedScope: null,
+            savedOriginScope: null,
+            originScope: s.savedOriginScope ?? 'expanded',
             searchFrom: null,
             scope: 'expanded',
             expandedMatches,
@@ -1471,22 +1534,33 @@ function foldAndContinueSearch(
     search: { ...s, scope: 'list' },
   }
 
-  const listResult = s.listMatches.length > 0
+  const needsRecompute = s.listMatches.length === 0
+  const listResult = !needsRecompute
     ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices, fileMatchIndices: s.fileMatchIndices }
     : computeListMatches(foldedState.commits, pattern, ignoreCase, foldedState.branchTips, s.searchBody, s.searchFiles)
 
   if (listResult.matches.length === 0) return foldedState
+
+  const totals = needsRecompute && (s.searchBody || s.searchFiles)
+    ? computeExpandedMatchTotals(foldedState.commits, listResult.matches, listResult.bodyMatchIndices, listResult.fileMatchIndices, pattern, ignoreCase)
+    : { expandedMatchCounts: s.expandedMatchCounts, totalMatchCount: s.totalMatchCount }
 
   const activeIndex = resolveListActiveIndex(listResult.matches, foldedState.cursorIndex, direction)
   const targetIndex = listResult.matches[activeIndex]
   if (targetIndex === undefined) return foldedState
 
   if (s.searchBody && listResult.bodyMatchIndices.has(targetIndex)) {
-    return navigateToBodyMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchBody, pattern, ignoreCase, direction)
+    return navigateToBodyMatch(
+      { ...foldedState, search: { ...foldedState.search, listMatches: listResult.matches, bodyMatchIndices: listResult.bodyMatchIndices, fileMatchIndices: listResult.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+      targetIndex, { ...s, scope: 'list' }, s.query!, s.searchBody, pattern, ignoreCase, direction,
+    )
   }
 
   if (s.searchFiles && listResult.fileMatchIndices.has(targetIndex)) {
-    return navigateToFileMatch(foldedState, targetIndex, { ...s, scope: 'list' }, s.query!, s.searchFiles, pattern, ignoreCase, direction)
+    return navigateToFileMatch(
+      { ...foldedState, search: { ...foldedState.search, listMatches: listResult.matches, bodyMatchIndices: listResult.bodyMatchIndices, fileMatchIndices: listResult.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+      targetIndex, { ...s, scope: 'list' }, s.query!, s.searchFiles, pattern, ignoreCase, direction,
+    )
   }
 
   const newOffset = targetIndex < foldedState.scrollOffset || targetIndex >= foldedState.scrollOffset + foldedState.termHeight
@@ -1497,7 +1571,7 @@ function foldAndContinueSearch(
     ...foldedState,
     cursorIndex: targetIndex,
     scrollOffset: newOffset,
-    search: { ...foldedState.search, listMatches: listResult.matches, bodyMatchIndices: listResult.bodyMatchIndices, fileMatchIndices: listResult.fileMatchIndices, activeIndex, highlightsVisible: true },
+    search: { ...foldedState.search, listMatches: listResult.matches, bodyMatchIndices: listResult.bodyMatchIndices, fileMatchIndices: listResult.fileMatchIndices, activeIndex, highlightsVisible: true, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
     jumpStack: [...foldedState.jumpStack, foldedState.cursorIndex],
     jumpForwardStack: [],
   }
@@ -1510,21 +1584,32 @@ function searchNext(state: UiState): UiState {
   const { pattern, ignoreCase } = parseCaseFlags(s.query)
 
   if (s.scope === 'list') {
-    const result = s.listMatches.length > 0
+    const needsRecompute = s.listMatches.length === 0
+    const result = !needsRecompute
       ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices, fileMatchIndices: s.fileMatchIndices }
       : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody, s.searchFiles)
     if (result.matches.length === 0) return state
+
+    const totals = needsRecompute && (s.searchBody || s.searchFiles)
+      ? computeExpandedMatchTotals(state.commits, result.matches, result.bodyMatchIndices, result.fileMatchIndices, pattern, ignoreCase)
+      : { expandedMatchCounts: s.expandedMatchCounts, totalMatchCount: s.totalMatchCount }
 
     const goingUp = s.direction === 'backward'
     const landed = exitFileCursorIfSubjectMatch(state, result.matches, goingUp)
     if (landed !== null) return landed
 
-    if (s.searchBody && state.expandedIndex === null && s.bodyMatchIndices.has(state.cursorIndex)) {
-      return navigateToBodyMatch(state, state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    if (s.searchBody && state.expandedIndex === null && result.bodyMatchIndices.has(state.cursorIndex)) {
+      return navigateToBodyMatch(
+        { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+        state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase,
+      )
     }
 
-    if (s.searchFiles && state.expandedIndex === null && s.fileMatchIndices.has(state.cursorIndex)) {
-      return navigateToFileMatch(state, state.cursorIndex, s, s.query, s.searchFiles, pattern, ignoreCase)
+    if (s.searchFiles && state.expandedIndex === null && result.fileMatchIndices.has(state.cursorIndex)) {
+      return navigateToFileMatch(
+        { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+        state.cursorIndex, s, s.query, s.searchFiles, pattern, ignoreCase,
+      )
     }
 
     const activeIndex = resolveListActiveIndex(result.matches, state.cursorIndex, s.direction)
@@ -1532,11 +1617,17 @@ function searchNext(state: UiState): UiState {
 
     if (targetIndex !== undefined) {
       if (s.searchBody && result.bodyMatchIndices.has(targetIndex)) {
-        return navigateToBodyMatch(state, targetIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+        return navigateToBodyMatch(
+          { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+          targetIndex, s, s.query, s.searchBody, pattern, ignoreCase,
+        )
       }
 
       if (s.searchFiles && result.fileMatchIndices.has(targetIndex)) {
-        return navigateToFileMatch(state, targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase)
+        return navigateToFileMatch(
+          { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+          targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase,
+        )
       }
     }
 
@@ -1552,7 +1643,7 @@ function searchNext(state: UiState): UiState {
       scrollOffset: newOffset,
       expandedIndex: null,
       fileCursorIndex: null,
-      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true },
+      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
       ...withJump(state),
     }
   }
@@ -1592,21 +1683,32 @@ function searchPrev(state: UiState): UiState {
   const reverseDir = s.direction === 'forward' ? 'backward' : 'forward'
 
   if (s.scope === 'list') {
-    const result = s.listMatches.length > 0
+    const needsRecompute = s.listMatches.length === 0
+    const result = !needsRecompute
       ? { matches: s.listMatches, bodyMatchIndices: s.bodyMatchIndices, fileMatchIndices: s.fileMatchIndices }
       : computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody, s.searchFiles)
     if (result.matches.length === 0) return state
+
+    const totals = needsRecompute && (s.searchBody || s.searchFiles)
+      ? computeExpandedMatchTotals(state.commits, result.matches, result.bodyMatchIndices, result.fileMatchIndices, pattern, ignoreCase)
+      : { expandedMatchCounts: s.expandedMatchCounts, totalMatchCount: s.totalMatchCount }
 
     const goingUp = reverseDir === 'backward'
     const landed = exitFileCursorIfSubjectMatch(state, result.matches, goingUp)
     if (landed !== null) return landed
 
-    if (s.searchBody && state.expandedIndex === null && s.bodyMatchIndices.has(state.cursorIndex)) {
-      return navigateToBodyMatch(state, state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+    if (s.searchBody && state.expandedIndex === null && result.bodyMatchIndices.has(state.cursorIndex)) {
+      return navigateToBodyMatch(
+        { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+        state.cursorIndex, s, s.query, s.searchBody, pattern, ignoreCase, reverseDir,
+      )
     }
 
-    if (s.searchFiles && state.expandedIndex === null && s.fileMatchIndices.has(state.cursorIndex)) {
-      return navigateToFileMatch(state, state.cursorIndex, s, s.query, s.searchFiles, pattern, ignoreCase)
+    if (s.searchFiles && state.expandedIndex === null && result.fileMatchIndices.has(state.cursorIndex)) {
+      return navigateToFileMatch(
+        { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+        state.cursorIndex, s, s.query, s.searchFiles, pattern, ignoreCase, reverseDir,
+      )
     }
 
     const activeIndex = resolveListActiveIndex(result.matches, state.cursorIndex, reverseDir)
@@ -1614,11 +1716,17 @@ function searchPrev(state: UiState): UiState {
 
     if (targetIndex !== undefined) {
       if (s.searchBody && result.bodyMatchIndices.has(targetIndex)) {
-        return navigateToBodyMatch(state, targetIndex, s, s.query, s.searchBody, pattern, ignoreCase)
+        return navigateToBodyMatch(
+          { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+          targetIndex, s, s.query, s.searchBody, pattern, ignoreCase, reverseDir,
+        )
       }
 
       if (s.searchFiles && result.fileMatchIndices.has(targetIndex)) {
-        return navigateToFileMatch(state, targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase)
+        return navigateToFileMatch(
+          { ...state, search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
+          targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase, reverseDir,
+        )
       }
     }
 
@@ -1634,7 +1742,7 @@ function searchPrev(state: UiState): UiState {
       scrollOffset: newOffset,
       expandedIndex: null,
       fileCursorIndex: null,
-      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true },
+      search: { ...s, listMatches: result.matches, bodyMatchIndices: result.bodyMatchIndices, fileMatchIndices: result.fileMatchIndices, activeIndex, highlightsVisible: true, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
       ...withJump(state),
     }
   }
@@ -1683,6 +1791,10 @@ function searchLoadComplete(state: UiState): UiState {
   const { pattern, ignoreCase } = parseCaseFlags(s.query)
   const { matches, bodyMatchIndices, fileMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody, s.searchFiles)
 
+  const totals = (s.searchBody || s.searchFiles)
+    ? computeExpandedMatchTotals(state.commits, matches, bodyMatchIndices, fileMatchIndices, pattern, ignoreCase)
+    : { expandedMatchCounts: new Map<number, number>(), totalMatchCount: matches.length }
+
   if (matches.length > 0) {
     const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
     const targetIndex = matches[activeIndex]
@@ -1690,14 +1802,14 @@ function searchLoadComplete(state: UiState): UiState {
     if (targetIndex !== undefined) {
       if (s.searchBody && bodyMatchIndices.has(targetIndex)) {
         return navigateToBodyMatch(
-          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false } },
+          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
           targetIndex, s, s.query, s.searchBody, pattern, ignoreCase,
         )
       }
 
       if (s.searchFiles && fileMatchIndices.has(targetIndex)) {
         return navigateToFileMatch(
-          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false } },
+          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
           targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase,
         )
       }
@@ -1711,7 +1823,7 @@ function searchLoadComplete(state: UiState): UiState {
         cursorIndex: targetIndex,
         scrollOffset: newOffset,
         expandedIndex: null,
-        search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex, highlightsVisible: true, loadingAll: false },
+        search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex, highlightsVisible: true, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
         ...withJump(state),
       }
     }
@@ -1719,7 +1831,7 @@ function searchLoadComplete(state: UiState): UiState {
 
   return {
     ...state,
-    search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex: -1, highlightsVisible: true, loadingAll: false },
+    search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex: -1, highlightsVisible: true, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
   }
 }
 

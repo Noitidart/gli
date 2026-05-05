@@ -96,11 +96,37 @@ export function render(state: UiState): string {
       : `${prefix}${state.search.prompt}`
     lines.push(`\x1b[7m${promptLine.padEnd(state.termWidth)}\x1b[0m`)
   } else if (state.search.query !== null && state.search.highlightsVisible) {
-    const matches = state.search.scope === 'list' ? state.search.listMatches : state.search.expandedMatches
-    if (matches.length > 0 && state.search.activeIndex >= 0) {
-      const counter = `match ${state.search.activeIndex + 1} of ${matches.length}`
-      lines.push(truncate(counter, state.termWidth))
-    } else if (matches.length === 0) {
+    const s = state.search
+    let matchCount: number
+    let matchPosition: number
+
+    if (s.originScope === 'list') {
+      matchCount = s.totalMatchCount || s.listMatches.length
+
+      const currentCommitIndex = s.scope === 'expanded'
+        ? (state.expandedIndex ?? state.cursorIndex)
+        : state.cursorIndex
+      const listIdx = s.listMatches.indexOf(currentCommitIndex)
+
+      matchPosition = 0
+      for (let i = 0; i < listIdx; i++) {
+        matchPosition += s.expandedMatchCounts.get(s.listMatches[i]!) ?? 1
+      }
+
+      if (s.scope === 'expanded') {
+        matchPosition += s.activeIndex + 1
+      } else {
+        matchPosition += 1
+      }
+    } else {
+      const matches = s.scope === 'list' ? s.listMatches : s.expandedMatches
+      matchCount = matches.length
+      matchPosition = s.activeIndex
+    }
+
+    if (matchCount > 0 && matchPosition >= 1) {
+      lines.push(truncate(`match ${matchPosition} of ${matchCount}`, state.termWidth))
+    } else if (matchCount === 0) {
       lines.push(truncate('No matches', state.termWidth))
     } else {
       lines.push('')
