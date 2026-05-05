@@ -11,9 +11,6 @@ export function tickSpinner(): void {
   spinnerFrame = (spinnerFrame + 1) % SPINNER_CHARS.length
 }
 
-const hasActiveBar = (state: UiState): boolean =>
-  state.search.inputMode || state.search.loadingAll || state.pendingMarkJump !== null || (state.search.query !== null && state.search.highlightsVisible)
-
 export function render(state: UiState): string {
   const lines: string[] = []
 
@@ -84,6 +81,11 @@ export function render(state: UiState): string {
       : 'Searching all commits...'
     const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
     lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
+  } else if (state.loadingMore) {
+    const label = state.commits.length === 0
+      ? 'Loading...'
+      : 'Loading more commits...'
+    lines.push(`\x1b[7m${label.padEnd(state.termWidth)}\x1b[0m`)
   } else if (state.search.inputMode) {
     const prefix = state.search.direction === 'forward' ? '/' : '?'
     const promptLine = state.search.flagError

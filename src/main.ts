@@ -1,10 +1,10 @@
 import {
-  enterRawMode,
   enterAltScreen,
+  enterRawMode,
   exitAltScreen,
+  getTermSize,
   hideCursor,
   restoreTerminal,
-  getTermSize,
 } from './terminal.js'
 
 import {
@@ -48,11 +48,14 @@ import {
   isPrintable,
 } from './keys.js'
 
+const INITIAL_LOAD_COUNT = 100
+const LOAD_MORE_COUNT = 100
+
 import { spawn } from 'node:child_process'
-import { getCommitsWithBody, getTotalCount, getCommitDetail, getBranchTips, getUnpushedShas } from './git.js'
-import { createInitialState, reduce, type Action } from './state.js'
-import { render, tickSpinner } from './render.js'
 import { copyToClipboard } from './clipboard.js'
+import { getBranchTips, getCommitDetail, getCommitsWithBody, getTotalCount, getUnpushedShas } from './git.js'
+import { render, tickSpinner } from './render.js'
+import { createInitialState, reduce, type Action } from './state.js'
 
 function parsePathspecs(argv: string[]): string[] | undefined {
   const dashIndex = argv.indexOf('--')
@@ -269,15 +272,18 @@ async function main() {
   const size = getTermSize()
   const pathspecs = parsePathspecs(process.argv)
 
+  const initialScreen = createInitialState([], 0, false, size.height, size.width, new Map(), new Set())
+  process.stdout.write(render({ ...initialScreen, loadingMore: true }))
+
   const totalCommits = await getTotalCount(pathspecs)
-  const initialCommits = await getCommitsWithBody(0, 100, pathspecs)
-  const hasMore = initialCommits.length >= 100
+  const initialCommits = await getCommitsWithBody(0, INITIAL_LOAD_COUNT, pathspecs)
+  const hasMore = initialCommits.length >= INITIAL_LOAD_COUNT
   const branchTips = await getBranchTips()
   const unpushedShas = await getUnpushedShas()
 
   let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width, branchTips, unpushedShas)
-  let isLoadingMore = false
   let cancelLoadAll = false
+  let cancelLoadMore = false
   let cancelMarkJump = false
   let spinnerTimer: ReturnType<typeof setInterval> | null = null
 
@@ -579,6 +585,25 @@ async function main() {
       return
     }
 
+    if (state.loadingMore) {
+      for (let i = 0; i < data.length; i++) {
+        const byte = data[i]
+        if (byte === undefined) continue
+
+        if (byte === BYTE_ESCAPE) {
+          cancelLoadMore = true
+          return
+        }
+
+        if (byte === BYTE_CTRL_C) {
+          if (spinnerTimer !== null) clearInterval(spinnerTimer)
+          restoreTerminal()
+          process.exit(0)
+        }
+      }
+      return
+    }
+
     if (state.pendingMarkJump !== null) {
       for (let i = 0; i < data.length; i++) {
         const byte = data[i]
@@ -623,12 +648,12 @@ async function main() {
             setImmediate(async () => {
               try {
                 while (state.hasMore && !cancelLoadAll) {
-                  const newCommits = await getCommitsWithBody(state.commits.length, 200, pathspecs)
+                  const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
                   state = reduce(state, {
                     type: 'commits-loaded',
                     commits: newCommits,
                     total: state.totalCommits,
-                    hasMore: newCommits.length >= 200,
+                    hasMore: newCommits.length >= LOAD_MORE_COUNT,
                   })
                   process.stdout.write(render(state))
                 }
@@ -754,6 +779,41 @@ async function main() {
       state = reduce(state, action)
       process.stdout.write(render(state))
 
+      if (state.loadingMore && !state.search.loadingAll && state.pendingMarkJump === null) {
+        const firstNewIndex = state.commits.length
+
+        setImmediate(async () => {
+          try {
+            const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
+            if (cancelLoadMore) {
+              cancelLoadMore = false
+              state = { ...state, loadingMore: false }
+              process.stdout.write(render(state))
+              return
+            }
+            state = reduce(state, {
+              type: 'commits-loaded',
+              commits: newCommits,
+              total: state.totalCommits,
+              hasMore: newCommits.length >= LOAD_MORE_COUNT,
+            })
+
+            if (newCommits.length > 0) {
+              const targetIndex = Math.min(firstNewIndex, state.commits.length - 1)
+              const newOffset = Math.max(0, targetIndex - state.termHeight + 1)
+              state = { ...state, cursorIndex: targetIndex, scrollOffset: newOffset }
+            }
+          } catch {
+            // Failed to load more — silently stop paginating
+          } finally {
+            state = { ...state, loadingMore: false }
+          }
+          process.stdout.write(render(state))
+        })
+
+        return
+      }
+
       if ((action.type === 'expand' || action.type === 'toggle-expand' || action.type === 'enter-file-cursor' || action.type === 'search-next' || action.type === 'search-prev') && state.expandedIndex !== null) {
         const expandedCommit = state.commits[state.expandedIndex]
 
@@ -790,12 +850,12 @@ async function main() {
         setImmediate(async () => {
           try {
             while (state.hasMore && !cancelMarkJump) {
-              const newCommits = await getCommitsWithBody(state.commits.length, 100, pathspecs)
+              const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
               state = reduce(state, {
                 type: 'commits-loaded',
                 commits: newCommits,
                 total: state.totalCommits,
-                hasMore: newCommits.length >= 100,
+                hasMore: newCommits.length >= LOAD_MORE_COUNT,
               })
 
               if (state.commits.some((c) => c.shortSha === targetSha)) {
@@ -823,26 +883,6 @@ async function main() {
       }
     }
 
-    if (state.cursorIndex >= state.commits.length - 1 && state.hasMore && !isLoadingMore && !state.search.loadingAll && state.pendingMarkJump === null) {
-      isLoadingMore = true
-
-      setImmediate(async () => {
-        try {
-          const newCommits = await getCommitsWithBody(state.commits.length, 100, pathspecs)
-          state = reduce(state, {
-            type: 'commits-loaded',
-            commits: newCommits,
-            total: state.totalCommits,
-            hasMore: newCommits.length >= 100,
-          })
-        } catch {
-          // Failed to load more — silently stop paginating
-        } finally {
-          isLoadingMore = false
-        }
-        process.stdout.write(render(state))
-      })
-    }
   })
 
   process.stdout.on('resize', () => {

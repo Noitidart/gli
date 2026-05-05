@@ -47,6 +47,7 @@ export type UiState = {
   jumpStack: number[]
   jumpForwardStack: number[]
   pendingMarkJump: string | null
+  loadingMore: boolean
   search: SearchState
 }
 
@@ -92,6 +93,7 @@ export type Action =
   | { type: 'search-load-complete' }
   | { type: 'resolve-pending-mark-jump' }
   | { type: 'cancel-pending-mark-jump' }
+  | { type: 'needs-load-more' }
 
 export function createInitialState(
   commits: Commit[],
@@ -124,6 +126,7 @@ export function createInitialState(
     jumpStack: [],
     jumpForwardStack: [],
     pendingMarkJump: null,
+    loadingMore: false,
     search: emptySearch(),
   }
 }
@@ -234,6 +237,11 @@ export function reduce(state: UiState, action: Action): UiState {
       return resolvePendingMarkJump(state)
     case 'cancel-pending-mark-jump':
       return cancelPendingMarkJump(state)
+    case 'needs-load-more':
+      if (state.hasMore && !state.loadingMore) {
+        return { ...state, loadingMore: true }
+      }
+      return state
   }
 }
 
@@ -280,6 +288,9 @@ function moveDown(state: UiState): UiState {
   }
 
   if (state.cursorIndex >= state.commits.length - 1) {
+    if (state.hasMore && !state.loadingMore) {
+      return { ...state, loadingMore: true }
+    }
     return state
   }
 
@@ -341,10 +352,26 @@ function pageDown(state: UiState): UiState {
     return pageDown(clearSelections({ ...state, fileCursorIndex: null }))
   }
 
+  const maxIndex = state.commits.length - 1
   const newCursor = Math.min(
     state.cursorIndex + state.termHeight,
-    state.commits.length - 1,
+    maxIndex,
   )
+
+  if (newCursor === maxIndex && state.hasMore && !state.loadingMore) {
+    const newOffset = Math.max(0, newCursor - state.termHeight + 1)
+    const keepExpanded = state.expandedIndex === newCursor
+
+    return clearSelections({
+      ...state,
+      cursorIndex: newCursor,
+      scrollOffset: newOffset,
+      expandedIndex: keepExpanded ? state.expandedIndex : null,
+      search: preserveListSearch(state.search),
+      loadingMore: true,
+    })
+  }
+
   const newOffset = Math.max(0, newCursor - state.termHeight + 1)
   const keepExpanded = state.expandedIndex === newCursor
 
@@ -396,7 +423,12 @@ function jumpTop(state: UiState): UiState {
 
 function jumpBottom(state: UiState): UiState {
   const newCursor = state.commits.length - 1
-  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) return state
+  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) {
+    if (state.hasMore && !state.loadingMore) {
+      return { ...state, loadingMore: true }
+    }
+    return state
+  }
 
   const newOffset = Math.max(0, newCursor - state.termHeight + 1)
   const keepExpanded = state.expandedIndex === newCursor
@@ -414,7 +446,12 @@ function jumpBottom(state: UiState): UiState {
 
 function jumpLine(state: UiState, line: number): UiState {
   const newCursor = Math.max(0, Math.min(line - 1, state.commits.length - 1))
-  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) return state
+  if (state.cursorIndex === newCursor && state.fileCursorIndex === null) {
+    if (line - 1 >= state.commits.length && state.hasMore && !state.loadingMore) {
+      return { ...state, loadingMore: true }
+    }
+    return state
+  }
 
   const newOffset = Math.max(0, newCursor - Math.floor(state.termHeight / 2))
   const keepExpanded = state.expandedIndex === newCursor
@@ -825,7 +862,19 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
 
   const raw = { ...state, expandedIndex: null }
   const delta = direction === 'down' ? count : -count
-  const newCursor = Math.max(0, Math.min(raw.commits.length - 1, raw.cursorIndex + delta))
+  const maxIndex = raw.commits.length - 1
+  const newCursor = Math.max(0, Math.min(maxIndex, raw.cursorIndex + delta))
+
+  if (direction === 'down' && raw.cursorIndex + delta > maxIndex && raw.hasMore && !raw.loadingMore) {
+    return {
+      ...raw,
+      cursorIndex: maxIndex,
+      scrollOffset: maxIndex >= raw.scrollOffset + raw.termHeight
+        ? maxIndex - raw.termHeight + 1
+        : raw.scrollOffset,
+      loadingMore: true,
+    }
+  }
 
   let newOffset = raw.scrollOffset
 
