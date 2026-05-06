@@ -10,7 +10,7 @@ export function render(state: UiState): string {
   const effectiveHeight = state.termHeight
   const maxLineNum = state.scrollOffset + effectiveHeight
   const numWidth = Math.max(3, String(maxLineNum).length)
-  const shaWidth = 7
+  const shaWidth = state.commits.reduce((max, c) => Math.max(max, c.shortSha.length), 7)
   const branchWidth = state.branchColWidth
 
   const indent = ' '.repeat(2 * numWidth + shaWidth + branchWidth + 11)
@@ -346,15 +346,17 @@ function renderExpandedCommit(
   lines.push('')
 
   if (commit.files.length > 0) {
-    const maxFileLen = termWidth - indent.length
+    const bulletWidth = 2
+    const maxFileLen = termWidth - indent.length - bulletWidth
 
     for (let i = 0; i < commit.files.length; i++) {
       const file = commit.files[i]
       if (file === undefined) {
         continue
       }
-      const dot = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
-      const filePrefix = `${dot} ${file.status}  `
+      const bullet = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
+      const bulletPad = ' '
+      const filePrefix = `${file.status}  `
       const numstat = file.added !== null && file.deleted !== null
         ? `  +${file.added} -${file.deleted}`
         : ''
@@ -363,14 +365,14 @@ function renderExpandedCommit(
       if (state.fileCursorIndex === i) {
         const highlightedPath = highlightReversed(filePath, expandedHighlight)
         const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
-        const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
+        const rendered = maxFileLen > 0 ? `${bullet}${bulletPad}${indent}${content}` : `${bullet}${bulletPad}${indent}`
         lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
       } else {
         const highlightedPath = expandedHighlight !== null && maxFileLen > 0
           ? highlight(filePath, expandedHighlight)
           : filePath
         const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
-        const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
+        const rendered = maxFileLen > 0 ? `${bullet}${bulletPad}${indent}${content}` : `${bullet}${bulletPad}${indent}`
         lines.push(rendered)
       }
     }
