@@ -42,12 +42,22 @@ function getMaxMsgLen(state: UiState): number {
   return state.termWidth - overhead
 }
 
+function displayHeight(state: UiState, index: number): number {
+  return commitDisplayHeight(
+    state.commits, index, getMaxMsgLen(state),
+    state.branchTips, state.branchColWidth,
+    state.expandedIndex, state.termWidth,
+  )
+}
+
 function commitDisplayHeight(
   commits: Commit[],
   index: number,
   maxMsgLen: number,
   branchTips: Map<string, string[]>,
   branchWidth: number,
+  expandedIndex: number | null = null,
+  termWidth: number = 0,
 ): number {
   const commit = commits[index]
   if (commit === undefined) return 1
@@ -58,19 +68,43 @@ function commitDisplayHeight(
     : ['']
 
   const subjectLines = maxMsgLen > 0 ? wordWrap(commit.message, maxMsgLen).length : 1
+  const foldedHeight = branchLines.length + subjectLines - 1
 
-  return branchLines.length + subjectLines - 1
+  if (index !== expandedIndex) {
+    return foldedHeight
+  }
+
+  let height = foldedHeight
+
+  height += 1 // author
+
+  height += 2 // blanks
+
+  if (commit.body !== null && commit.body.length > 0) {
+    const maxLineNum = index + 1 + termWidth
+    const numWidth = Math.max(3, String(maxLineNum).length)
+    const indentLen = 2 * numWidth + 7 + branchWidth + 11
+    const maxBodyLen = termWidth - indentLen
+    for (const line of commit.body.split('\n')) {
+      height += maxBodyLen > 0 ? wordWrap(line, maxBodyLen).length : 1
+    }
+  }
+
+  height += 1 // blank before files
+
+  height += commit.files.length
+
+  return height
 }
 
 function clampScrollOffset(state: UiState, cursorIndex: number): number {
   if (cursorIndex < state.scrollOffset) return cursorIndex
 
-  const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
+  const { termHeight, scrollOffset } = state
 
   let displayLines = 0
-  for (let i = scrollOffset; i <= cursorIndex && i < commits.length; i++) {
-    displayLines += commitDisplayHeight(commits, i, maxMsgLen, branchTips, branchColWidth)
+  for (let i = scrollOffset; i <= cursorIndex && i < state.commits.length; i++) {
+    displayLines += displayHeight(state, i)
   }
 
   if (displayLines <= termHeight) return scrollOffset
@@ -78,7 +112,7 @@ function clampScrollOffset(state: UiState, cursorIndex: number): number {
   let newOffset = scrollOffset
   let totalLines = displayLines
   while (newOffset < cursorIndex) {
-    totalLines -= commitDisplayHeight(commits, newOffset, maxMsgLen, branchTips, branchColWidth)
+    totalLines -= displayHeight(state, newOffset)
     newOffset++
     if (totalLines <= termHeight) break
   }
@@ -89,12 +123,11 @@ function clampScrollOffset(state: UiState, cursorIndex: number): number {
 function scrollToTarget(state: UiState, targetIndex: number): number {
   if (targetIndex < state.scrollOffset) return targetIndex
 
-  const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
+  const { termHeight, scrollOffset } = state
 
   let displayLines = 0
-  for (let i = scrollOffset; i <= targetIndex && i < commits.length; i++) {
-    displayLines += commitDisplayHeight(commits, i, maxMsgLen, branchTips, branchColWidth)
+  for (let i = scrollOffset; i <= targetIndex && i < state.commits.length; i++) {
+    displayLines += displayHeight(state, i)
   }
 
   if (displayLines <= termHeight) return scrollOffset
@@ -103,14 +136,13 @@ function scrollToTarget(state: UiState, targetIndex: number): number {
 }
 
 function pageDownNewOffset(state: UiState): number {
-  const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
+  const { commits, termHeight, scrollOffset } = state
 
   let displayLines = 0
   let offset = scrollOffset
 
   while (offset < commits.length) {
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
+    displayLines += displayHeight(state, offset)
     offset++
     if (displayLines >= termHeight - 2) break
   }
@@ -119,15 +151,14 @@ function pageDownNewOffset(state: UiState): number {
 }
 
 function pageUpNewOffset(state: UiState): number {
-  const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, scrollOffset, branchTips, branchColWidth } = state
+  const { termHeight, scrollOffset } = state
 
   let displayLines = 0
   let offset = scrollOffset
 
   while (offset > 0) {
     offset--
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
+    displayLines += displayHeight(state, offset)
     if (displayLines >= termHeight - 2) break
   }
 
@@ -135,16 +166,15 @@ function pageUpNewOffset(state: UiState): number {
 }
 
 function jumpCenterOffset(state: UiState, targetIndex: number): number {
-  const maxMsgLen = getMaxMsgLen(state)
-  const { commits, termHeight, branchTips, branchColWidth } = state
+  const { termHeight } = state
   const halfHeight = Math.floor(termHeight / 2)
 
-  let displayLines = commitDisplayHeight(commits, targetIndex, maxMsgLen, branchTips, branchColWidth)
+  let displayLines = displayHeight(state, targetIndex)
   let offset = targetIndex
 
   while (offset > 0 && displayLines < halfHeight) {
     offset--
-    displayLines += commitDisplayHeight(commits, offset, maxMsgLen, branchTips, branchColWidth)
+    displayLines += displayHeight(state, offset)
   }
 
   return offset
@@ -604,6 +634,31 @@ function restoreFileSearchExpanded(state: UiState, commitIndex: number): UiState
   }
 }
 
+function adjustScrollForExpanded(state: UiState): UiState {
+  if (state.expandedIndex === null) return state
+
+  const expandedHeight = displayHeight(state, state.expandedIndex)
+
+  let linesBefore = 0
+  for (let i = state.scrollOffset; i < state.expandedIndex; i++) {
+    linesBefore += displayHeight(state, i)
+  }
+
+  if (linesBefore + expandedHeight <= state.termHeight) {
+    return state
+  }
+
+  const excess = linesBefore + expandedHeight - state.termHeight
+  let newOffset = state.scrollOffset
+  let reclaimed = 0
+  while (newOffset < state.expandedIndex && reclaimed < excess) {
+    reclaimed += displayHeight(state, newOffset)
+    newOffset++
+  }
+
+  return { ...state, scrollOffset: newOffset }
+}
+
 function expand(state: UiState): UiState {
   const base: UiState = {
     ...clearSelections(state),
@@ -612,7 +667,7 @@ function expand(state: UiState): UiState {
     search: preserveListSearch(state.search),
   }
 
-  return restoreFileSearchExpanded(restoreBodySearchExpanded(base, state.cursorIndex), state.cursorIndex)
+  return restoreFileSearchExpanded(restoreBodySearchExpanded(adjustScrollForExpanded(base), state.cursorIndex), state.cursorIndex)
 }
 
 function fold(state: UiState): UiState {
@@ -640,7 +695,7 @@ function toggleExpand(state: UiState): UiState {
     search: preserveListSearch(state.search),
   }
 
-  return restoreFileSearchExpanded(restoreBodySearchExpanded(base, state.cursorIndex), state.cursorIndex)
+  return restoreFileSearchExpanded(restoreBodySearchExpanded(adjustScrollForExpanded(base), state.cursorIndex), state.cursorIndex)
 }
 
 function resize(state: UiState, height: number, width: number): UiState {
@@ -689,7 +744,7 @@ function enterFileCursor(state: UiState): UiState {
     search: preserveListSearch(state.search),
   }
 
-  return restoreFileSearchExpanded(restoreBodySearchExpanded(base, state.cursorIndex), state.cursorIndex)
+  return restoreFileSearchExpanded(restoreBodySearchExpanded(adjustScrollForExpanded(base), state.cursorIndex), state.cursorIndex)
 }
 
 function exitFileCursor(state: UiState): UiState {

@@ -37,13 +37,16 @@ export function render(state: UiState): string {
         state.termWidth,
       )
 
-      if (displayLine + expandedLines.length > effectiveHeight) {
-        break
-      }
+      const available = effectiveHeight - displayLine
+      const limit = Math.min(available, expandedLines.length)
 
-      for (let j = 0; j < expandedLines.length; j++) {
+      for (let j = 0; j < limit; j++) {
         lines.push(expandedLines[j] ?? '')
         displayLine++
+      }
+
+      if (displayLine >= effectiveHeight) {
+        break
       }
     } else {
       const foldedLines = renderFoldedCommit(
@@ -56,13 +59,16 @@ export function render(state: UiState): string {
         state.termWidth,
       )
 
-      if (displayLine + foldedLines.length > effectiveHeight) {
-        break
-      }
+      const available = effectiveHeight - displayLine
+      const limit = Math.min(available, foldedLines.length)
 
-      for (let j = 0; j < foldedLines.length; j++) {
+      for (let j = 0; j < limit; j++) {
         lines.push(foldedLines[j] ?? '')
         displayLine++
+      }
+
+      if (displayLine >= effectiveHeight) {
+        break
       }
     }
 
