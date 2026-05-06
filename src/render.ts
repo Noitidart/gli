@@ -349,29 +349,48 @@ function renderExpandedCommit(
     const bulletWidth = 2
     const maxFileLen = termWidth - indent.length - bulletWidth
 
-    for (let i = 0; i < commit.files.length; i++) {
+    const maxStatusWidth = commit.files.reduce(
+      (max, f) => Math.max(max, f.status.length), 0,
+    )
+
+    const sortedIndices = commit.files
+      .map((f, i) => ({ path: f.path, index: i }))
+      .sort((a, b) => a.path.localeCompare(b.path))
+
+    const hasNumstat = commit.files.some(
+      f => f.added !== null && f.deleted !== null,
+    )
+    const numstatColumn = hasNumstat
+      ? commit.files.reduce(
+          (max, f) => Math.max(max, maxStatusWidth + 2 + f.path.length), 0,
+        ) + 2
+      : 0
+
+    for (const { index: i } of sortedIndices) {
       const file = commit.files[i]
       if (file === undefined) {
         continue
       }
       const bullet = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
       const bulletPad = ' '
-      const filePrefix = `${file.status}  `
-      const numstat = file.added !== null && file.deleted !== null
-        ? `  +${file.added} -${file.deleted}`
-        : ''
+      const status = file.status.padEnd(maxStatusWidth)
       const filePath = file.path
+      const pathEnd = maxStatusWidth + 2 + filePath.length
+      const numstatStr = file.added !== null && file.deleted !== null
+        ? ' '.repeat(Math.max(0, numstatColumn - pathEnd)) + `+${file.added} -${file.deleted}`
+        : ''
+      const line = `${status}  ${filePath}${numstatStr}`
 
       if (state.fileCursorIndex === i) {
-        const highlightedPath = highlightReversed(filePath, expandedHighlight)
-        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
+        const highlighted = highlightReversed(line, expandedHighlight)
+        const content = maxFileLen > 0 ? truncate(highlighted, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${bullet}${bulletPad}${indent}${content}` : `${bullet}${bulletPad}${indent}`
         lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
       } else {
-        const highlightedPath = expandedHighlight !== null && maxFileLen > 0
-          ? highlight(filePath, expandedHighlight)
-          : filePath
-        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
+        const highlighted = expandedHighlight !== null && maxFileLen > 0
+          ? highlight(line, expandedHighlight)
+          : line
+        const content = maxFileLen > 0 ? truncate(highlighted, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${bullet}${bulletPad}${indent}${content}` : `${bullet}${bulletPad}${indent}`
         lines.push(rendered)
       }
