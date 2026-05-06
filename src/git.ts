@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process'
 
 export type FileStat = {
   path: string
-  added: number
-  deleted: number
+  status: string
+  added: number | null
+  deleted: number | null
 }
 
 export type Commit = {
@@ -13,7 +14,8 @@ export type Commit = {
   date: string
   message: string
   body: string | null
-  files: FileStat[] | null
+  files: FileStat[]
+  numstatLoaded: boolean
 }
 
 function spawnGit(args: string[]): Promise<string> {
@@ -46,24 +48,11 @@ function spawnGit(args: string[]): Promise<string> {
   })
 }
 
-export async function getTotalCount(pathspecs?: string[]): Promise<number> {
-  try {
-    const args = ['rev-list', '--count', 'HEAD']
-    if (pathspecs !== undefined && pathspecs.length > 0) {
-      args.push('--', ...pathspecs)
-    }
-    const output = await spawnGit(args)
-    return parseInt(output.trim(), 10)
-  } catch {
-    return 0
-  }
-}
+const NAME_STATUS_RE = /^([ACDMRTX]\d*)\t(.+)$/
 
-const NUMSTAT_RE = /^(\d+|-)\t(\d+|-)\t(.+)$/
-
-function extractNumstatFromChunk(text: string): { numstatLines: string[]; rest: string } {
+function extractNameStatusLines(text: string): { statusLines: string[]; rest: string } {
   const lines = text.split('\n')
-  const numstatLines: string[] = []
+  const statusLines: string[] = []
 
   let i = 0
 
@@ -73,8 +62,8 @@ function extractNumstatFromChunk(text: string): { numstatLines: string[]; rest: 
 
   while (i < lines.length) {
     const line = lines[i]
-    if (line !== undefined && NUMSTAT_RE.test(line)) {
-      numstatLines.push(line)
+    if (line !== undefined && NAME_STATUS_RE.test(line)) {
+      statusLines.push(line)
       i++
     } else {
       break
@@ -82,7 +71,34 @@ function extractNumstatFromChunk(text: string): { numstatLines: string[]; rest: 
   }
 
   const rest = lines.slice(i).join('\n')
-  return { numstatLines, rest }
+  return { statusLines, rest }
+}
+
+function parseNameStatusLines(lines: string[]): FileStat[] {
+  const files: FileStat[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line === undefined) continue
+
+    const match = NAME_STATUS_RE.exec(line)
+    if (match === null) continue
+
+    const status = match[1] ?? ''
+    const pathPart = match[2] ?? ''
+
+    let path: string
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const tabIdx = pathPart.indexOf('\t')
+      path = tabIdx !== -1 ? pathPart.slice(tabIdx + 1) : pathPart
+    } else {
+      path = pathPart
+    }
+
+    files.push({ path, status, added: null, deleted: null })
+  }
+
+  return files
 }
 
 function resolveRenamePath(path: string): string {
@@ -101,37 +117,12 @@ function resolveRenamePath(path: string): string {
   return path
 }
 
-function parseNumstatLines(lines: string[]): FileStat[] {
-  const files: FileStat[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (line === undefined) continue
-
-    const match = NUMSTAT_RE.exec(line)
-    if (match === null) continue
-
-    const added = parseInt(match[1] ?? '', 10)
-    const deleted = parseInt(match[2] ?? '', 10)
-
-    if (isNaN(added) || isNaN(deleted)) continue
-
-    const path = resolveRenamePath(match[3] ?? '')
-
-    files.push({ path, added, deleted })
-  }
-
-  return files
-}
-
-export async function getCommitsWithBody(skip: number, maxCount: number, pathspecs?: string[]): Promise<Commit[]> {
+export async function getAllCommits(pathspecs?: string[]): Promise<Commit[]> {
   const args = [
     'log',
     '--format=format:%h%x1f%H%x1f%an%x1f%ad%x1f%s%x1f%b%x00',
-    '--numstat',
+    '--name-status',
     '--date=short',
-    `--skip=${skip}`,
-    `--max-count=${maxCount}`,
   ]
 
   if (pathspecs !== undefined && pathspecs.length > 0) {
@@ -142,17 +133,18 @@ export async function getCommitsWithBody(skip: number, maxCount: number, pathspe
 
   const commits: Commit[] = []
   const chunks = output.split('\x00')
+
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     if (chunk === undefined || chunk === '') {
       continue
     }
 
-    const { numstatLines, rest } = extractNumstatFromChunk(chunk)
+    const { statusLines, rest } = extractNameStatusLines(chunk)
 
-    if (commits.length > 0 && numstatLines.length > 0) {
+    if (commits.length > 0 && statusLines.length > 0) {
       const prev = commits[commits.length - 1]!
-      commits[commits.length - 1] = { ...prev, files: parseNumstatLines(numstatLines) }
+      commits[commits.length - 1] = { ...prev, files: parseNameStatusLines(statusLines) }
     }
 
     const cleaned = rest.startsWith('\n') ? rest.slice(1) : rest
@@ -172,45 +164,39 @@ export async function getCommitsWithBody(skip: number, maxCount: number, pathspe
       message: parts[4] ?? '',
       body,
       files: [],
+      numstatLoaded: false,
     })
   }
 
-  const emptyFileIndices: number[] = []
-  for (let i = 0; i < commits.length; i++) {
-    const c = commits[i]
-    if (c !== undefined && c.files !== null && c.files.length === 0) {
-      emptyFileIndices.push(i)
-    }
-  }
-
-  if (emptyFileIndices.length > 0) {
-    const rootFiles = await Promise.all(
-      emptyFileIndices.map((idx) => {
-        const sha = commits[idx]!.fullSha
-        return spawnGit(['diff-tree', '--numstat', '-r', '--root', sha])
-          .then((out) => ({ idx, out }))
-          .catch(() => ({ idx, out: '' }))
-      }),
-    )
-
-    for (const { idx, out } of rootFiles) {
-      const lines = out.trim().split('\n')
-      const numstatLines: string[] = []
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i]
-        if (line !== undefined && NUMSTAT_RE.test(line)) {
-          numstatLines.push(line)
-        }
-      }
-
-      if (numstatLines.length > 0) {
-        const c = commits[idx]!
-        commits[idx] = { ...c, files: parseNumstatLines(numstatLines) }
-      }
-    }
-  }
-
   return commits
+}
+
+export async function getCommitNumstat(sha: string): Promise<Map<string, { added: number; deleted: number }>> {
+  const output = await spawnGit(['diff-tree', '--numstat', '-r', '--root', sha])
+
+  const result = new Map<string, { added: number; deleted: number }>()
+
+  const lines = output.trim().split('\n')
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line === undefined || line === '') continue
+
+    const tabIdx1 = line.indexOf('\t')
+    if (tabIdx1 === -1) continue
+    const tabIdx2 = line.indexOf('\t', tabIdx1 + 1)
+    if (tabIdx2 === -1) continue
+
+    const added = parseInt(line.slice(0, tabIdx1), 10)
+    const deleted = parseInt(line.slice(tabIdx1 + 1, tabIdx2), 10)
+    const rawPath = line.slice(tabIdx2 + 1)
+    const path = resolveRenamePath(rawPath)
+
+    if (isNaN(added) || isNaN(deleted)) continue
+
+    result.set(path, { added, deleted })
+  }
+
+  return result
 }
 
 export async function getUnpushedShas(): Promise<Set<string>> {
@@ -265,38 +251,4 @@ export async function getBranchTips(): Promise<Map<string, string[]>> {
   }
 
   return branchTips
-}
-
-export async function getCommitDetail(sha: string): Promise<{ body: string; files: FileStat[] }> {
-  const [bodyOutput, statsOutput] = await Promise.all([
-    spawnGit(['log', '-1', '--format=%b', sha]),
-    spawnGit(['diff-tree', '--numstat', '-r', '--root', sha]),
-  ])
-
-  const files: FileStat[] = []
-
-  const lines = statsOutput.trim().split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (line === undefined || line === '') {
-      continue
-    }
-
-    const parts = line.split('\t')
-    if (parts.length < 3) {
-      continue
-    }
-
-    const added = parseInt(parts[0] ?? '', 10)
-    const deleted = parseInt(parts[1] ?? '', 10)
-    const path = parts[2] ?? ''
-
-    if (isNaN(added) || isNaN(deleted)) {
-      continue
-    }
-
-    files.push({ path, added, deleted })
-  }
-
-  return { body: bodyOutput.trimEnd(), files }
 }

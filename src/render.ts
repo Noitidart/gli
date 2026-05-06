@@ -1,15 +1,8 @@
 import type { UiState } from './state.js'
-import { formatBranches, parseCaseFlags, wordWrap, wrapBranches } from './state.js'
-import type { Commit, FileStat } from './git.js'
+import { parseCaseFlags, wordWrap, wrapBranches } from './state.js'
+import type { Commit } from './git.js'
 
 type HighlightInfo = { pattern: string; ignoreCase: boolean }
-
-const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-let spinnerFrame = 0
-
-export function tickSpinner(): void {
-  spinnerFrame = (spinnerFrame + 1) % SPINNER_CHARS.length
-}
 
 export function render(state: UiState): string {
   const lines: string[] = []
@@ -80,23 +73,7 @@ export function render(state: UiState): string {
     lines.push('')
   }
 
-  if (state.pendingMarkJump !== null) {
-    const spinner = SPINNER_CHARS[spinnerFrame]
-    const progress = `${spinner} Finding master... ${state.commits.length}/${state.totalCommits}`
-    lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
-  } else if (state.search.loadingAll) {
-    const spinner = SPINNER_CHARS[spinnerFrame]
-    const label = state.search.searchBody ? 'Searching all commits (with body)...'
-      : state.search.searchFiles ? 'Searching all commits (with files)...'
-      : 'Searching all commits...'
-    const progress = `${spinner} ${label} ${state.commits.length}/${state.totalCommits}`
-    lines.push(`\x1b[7m${progress.padEnd(state.termWidth)}\x1b[0m`)
-  } else if (state.loadingMore) {
-    const label = state.commits.length === 0
-      ? 'Loading...'
-      : 'Loading more commits...'
-    lines.push(`\x1b[7m${label.padEnd(state.termWidth)}\x1b[0m`)
-  } else if (state.search.inputMode) {
+  if (state.search.inputMode) {
     const prefix = state.search.direction === 'forward' ? '/' : '?'
     const promptLine = state.search.flagError
       ? `${prefix}${state.search.prompt}  \x1b[31m${state.search.flagError}\x1b[0m`
@@ -328,9 +305,7 @@ function renderExpandedCommit(
 
   lines.push('')
 
-  if (commit.body === null) {
-    lines.push(`${indent}Loading...`)
-  } else if (commit.body.length > 0) {
+  if (commit.body !== null && commit.body.length > 0) {
     const bodyLines = commit.body.split('\n')
     const maxBodyLen = termWidth - indent.length
 
@@ -364,9 +339,7 @@ function renderExpandedCommit(
 
   lines.push('')
 
-  if (commit.files === null) {
-    lines.push(`${indent}Loading...`)
-  } else if (commit.files.length > 0) {
+  if (commit.files.length > 0) {
     const maxFileLen = termWidth - indent.length
 
     for (let i = 0; i < commit.files.length; i++) {
@@ -375,20 +348,22 @@ function renderExpandedCommit(
         continue
       }
       const dot = state.selectedFiles.has(i) ? '\x1b[32m●\x1b[0m' : ' '
-      const filePrefix = `${dot} `
-      const fileStats = `  +${file.added} -${file.deleted}`
+      const filePrefix = `${dot} ${file.status}  `
+      const numstat = file.added !== null && file.deleted !== null
+        ? `  +${file.added} -${file.deleted}`
+        : ''
       const filePath = file.path
 
       if (state.fileCursorIndex === i) {
         const highlightedPath = highlightReversed(filePath, expandedHighlight)
-        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${fileStats}`, maxFileLen) : ''
+        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
         lines.push(`\x1b[7m${rendered.padEnd(termWidth)}\x1b[0m`)
       } else {
         const highlightedPath = expandedHighlight !== null && maxFileLen > 0
           ? highlight(filePath, expandedHighlight)
           : filePath
-        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${fileStats}`, maxFileLen) : ''
+        const content = maxFileLen > 0 ? truncate(`${filePrefix}${highlightedPath}${numstat}`, maxFileLen) : ''
         const rendered = maxFileLen > 0 ? `${indent}${content}` : indent
         lines.push(rendered)
       }

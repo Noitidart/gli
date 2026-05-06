@@ -50,13 +50,10 @@ import {
   isPrintable,
 } from './keys.js'
 
-const INITIAL_LOAD_COUNT = 100
-const LOAD_MORE_COUNT = 100
-
 import { spawn } from 'node:child_process'
 import { copyToClipboard } from './clipboard.js'
-import { getBranchTips, getCommitDetail, getCommitsWithBody, getTotalCount, getUnpushedShas } from './git.js'
-import { render, tickSpinner } from './render.js'
+import { getAllCommits, getBranchTips, getCommitNumstat, getUnpushedShas } from './git.js'
+import { render } from './render.js'
 import { createInitialState, reduce, type Action } from './state.js'
 
 function parsePathspecs(argv: string[]): string[] | undefined {
@@ -146,7 +143,7 @@ SEARCH
   n          Next match
   N          Previous match
   Ctrl+L     Clear highlights (query kept; n/N restores them)
-  Escape     Cancel search input / cancel background loading
+   Escape     Cancel search input
 
   SCOPE
     Search scope is determined when you press / or ?:
@@ -195,11 +192,9 @@ SEARCH
     n/N re-expands it instead of skipping.
 
   FLAGS  (append after a delimiter: / # _ @ , ; -)
-    /!   Search ALL commits (loads progressively; Escape to cancel)
     /b   Include commit body text (list scope only)
     /f   Search file paths only (no subject/SHA/branch)
 
-    Flags can be combined with ! in any order (/!b or /b!).
     b and f cannot be combined.
 
   CASE SENSITIVITY
@@ -210,7 +205,7 @@ SEARCH
 MARKS
   m{a-z}     Set mark at current commit (not mm)
   '{a-z}     Jump to mark
-  'm         Jump to master/main branch tip (loads if needed)
+  'm         Jump to master/main branch tip
   ''         Jump to previous position
 
 JUMP STACK
@@ -226,7 +221,7 @@ BRANCH NAVIGATION
 
 QUIT
   q / Escape   Quit gli (restores terminal)
-  Ctrl+C       Force quit during background loading
+  Ctrl+C       Force quit
 
   During inspect (i), gli suspends and git show runs in the foreground
   with a pager. q or Ctrl+C there quits the pager, returning to gli.
@@ -252,14 +247,6 @@ LINE NUMBERS
 PATHSPECS
   Arguments after -- are passed as git pathspecs to filter commits.
   Example: gli -- src/main.ts
-
-PROGRESSIVE LOADING
-  100 commits load initially. When navigation needs to go past the last
-  loaded commit, more are fetched -- a loading indicator appears in the
-  status bar. Press Escape to cancel. Navigation then resumes from the
-  first newly loaded commit (does not continue the full count). The !
-  search flag loads all remaining commits -- once loaded, they stay in
-  memory.
 `
 
 async function main() {
@@ -280,20 +267,15 @@ async function main() {
   const size = getTermSize()
   const pathspecs = parsePathspecs(process.argv)
 
-  const initialScreen = createInitialState([], 0, false, size.height, size.width, new Map(), new Set())
-  process.stdout.write(render({ ...initialScreen, loadingMore: true }))
+  process.stdout.write(render(createInitialState([], size.height, size.width, new Map(), new Set())))
 
-  const totalCommits = await getTotalCount(pathspecs)
-  const initialCommits = await getCommitsWithBody(0, INITIAL_LOAD_COUNT, pathspecs)
-  const hasMore = initialCommits.length >= INITIAL_LOAD_COUNT
-  const branchTips = await getBranchTips()
-  const unpushedShas = await getUnpushedShas()
+  const [commits, branchTips, unpushedShas] = await Promise.all([
+    getAllCommits(pathspecs),
+    getBranchTips(),
+    getUnpushedShas(),
+  ])
 
-  let state = createInitialState(initialCommits, totalCommits, hasMore, size.height, size.width, branchTips, unpushedShas)
-  let cancelLoadAll = false
-  let cancelLoadMore = false
-  let cancelMarkJump = false
-  let spinnerTimer: ReturnType<typeof setInterval> | null = null
+  let state = createInitialState(commits, size.height, size.width, branchTips, unpushedShas)
 
   process.stdout.write(render(state))
 
@@ -574,63 +556,6 @@ async function main() {
       return
     }
 
-    if (state.search.loadingAll) {
-      for (let i = 0; i < data.length; i++) {
-        const byte = data[i]
-        if (byte === undefined) continue
-
-        if (byte === BYTE_ESCAPE) {
-          cancelLoadAll = true
-          return
-        }
-
-        if (byte === BYTE_CTRL_C) {
-          if (spinnerTimer !== null) clearInterval(spinnerTimer)
-          restoreTerminal()
-          process.exit(0)
-        }
-      }
-      return
-    }
-
-    if (state.loadingMore) {
-      for (let i = 0; i < data.length; i++) {
-        const byte = data[i]
-        if (byte === undefined) continue
-
-        if (byte === BYTE_ESCAPE) {
-          cancelLoadMore = true
-          return
-        }
-
-        if (byte === BYTE_CTRL_C) {
-          if (spinnerTimer !== null) clearInterval(spinnerTimer)
-          restoreTerminal()
-          process.exit(0)
-        }
-      }
-      return
-    }
-
-    if (state.pendingMarkJump !== null) {
-      for (let i = 0; i < data.length; i++) {
-        const byte = data[i]
-        if (byte === undefined) continue
-
-        if (byte === BYTE_ESCAPE) {
-          cancelMarkJump = true
-          return
-        }
-
-        if (byte === BYTE_CTRL_C) {
-          if (spinnerTimer !== null) clearInterval(spinnerTimer)
-          restoreTerminal()
-          process.exit(0)
-        }
-      }
-      return
-    }
-
     if (state.search.inputMode) {
       for (let i = 0; i < data.length; i++) {
         const byte = data[i]
@@ -645,36 +570,6 @@ async function main() {
         if (byte === BYTE_ENTER) {
           state = reduce(state, { type: 'search-confirm' })
           process.stdout.write(render(state))
-
-          if (state.search.loadingAll) {
-            cancelLoadAll = false
-            spinnerTimer = setInterval(() => {
-              tickSpinner()
-              process.stdout.write(render(state))
-            }, 80)
-
-            setImmediate(async () => {
-              try {
-                while (state.hasMore && !cancelLoadAll) {
-                  const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
-                  state = reduce(state, {
-                    type: 'commits-loaded',
-                    commits: newCommits,
-                    total: state.totalCommits,
-                    hasMore: newCommits.length >= LOAD_MORE_COUNT,
-                  })
-                  process.stdout.write(render(state))
-                }
-              } catch {
-                // stop on error
-              }
-
-              if (spinnerTimer !== null) clearInterval(spinnerTimer)
-              spinnerTimer = null
-              state = reduce(state, { type: 'search-load-complete' })
-              process.stdout.write(render(state))
-            })
-          }
 
           return
         }
@@ -737,7 +632,7 @@ async function main() {
             commit.fullSha,
           ]
 
-          if (state.fileCursorIndex !== null && commit.files !== null) {
+          if (state.fileCursorIndex !== null) {
             const cursorFileIsMarked = state.selectedFiles.has(state.fileCursorIndex)
 
             if (state.selectedFiles.size > 0 && cursorFileIsMarked) {
@@ -787,54 +682,18 @@ async function main() {
       state = reduce(state, action)
       process.stdout.write(render(state))
 
-      if (state.loadingMore && !state.search.loadingAll && state.pendingMarkJump === null) {
-        const firstNewIndex = state.commits.length
-
-        setImmediate(async () => {
-          try {
-            const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
-            if (cancelLoadMore) {
-              cancelLoadMore = false
-              state = { ...state, loadingMore: false }
-              process.stdout.write(render(state))
-              return
-            }
-            state = reduce(state, {
-              type: 'commits-loaded',
-              commits: newCommits,
-              total: state.totalCommits,
-              hasMore: newCommits.length >= LOAD_MORE_COUNT,
-            })
-
-            if (newCommits.length > 0) {
-              const targetIndex = Math.min(firstNewIndex, state.commits.length - 1)
-              const newOffset = Math.max(0, targetIndex - state.termHeight + 1)
-              state = { ...state, cursorIndex: targetIndex, scrollOffset: newOffset }
-            }
-          } catch {
-            // Failed to load more — silently stop paginating
-          } finally {
-            state = { ...state, loadingMore: false }
-          }
-          process.stdout.write(render(state))
-        })
-
-        return
-      }
-
       if ((action.type === 'expand' || action.type === 'toggle-expand' || action.type === 'enter-file-cursor' || action.type === 'search-next' || action.type === 'search-prev') && state.expandedIndex !== null) {
         const expandedCommit = state.commits[state.expandedIndex]
 
-        if (expandedCommit !== undefined && (expandedCommit.body === null || expandedCommit.files === null)) {
+        if (expandedCommit !== undefined && !expandedCommit.numstatLoaded) {
           const fetchIndex = state.expandedIndex
           const wasEnterFileCursor = action.type === 'enter-file-cursor'
 
-          getCommitDetail(expandedCommit.fullSha).then((detail) => {
+          getCommitNumstat(expandedCommit.fullSha).then((numstat) => {
             state = reduce(state, {
-              type: 'detail-loaded',
+              type: 'numstat-loaded',
               index: fetchIndex,
-              body: detail.body,
-              files: detail.files,
+              numstat,
             })
 
             if (wasEnterFileCursor && state.expandedIndex === fetchIndex) {
@@ -844,50 +703,6 @@ async function main() {
             process.stdout.write(render(state))
           })
         }
-      }
-
-      if (state.pendingMarkJump !== null) {
-        const targetSha = state.pendingMarkJump
-        cancelMarkJump = false
-
-        spinnerTimer = setInterval(() => {
-          tickSpinner()
-          process.stdout.write(render(state))
-        }, 80)
-
-        setImmediate(async () => {
-          try {
-            while (state.hasMore && !cancelMarkJump) {
-              const newCommits = await getCommitsWithBody(state.commits.length, LOAD_MORE_COUNT, pathspecs)
-              state = reduce(state, {
-                type: 'commits-loaded',
-                commits: newCommits,
-                total: state.totalCommits,
-                hasMore: newCommits.length >= LOAD_MORE_COUNT,
-              })
-
-              if (state.commits.some((c) => c.shortSha === targetSha)) {
-                state = reduce(state, { type: 'resolve-pending-mark-jump' })
-                break
-              }
-
-              process.stdout.write(render(state))
-            }
-          } catch {
-            // stop on error
-          }
-
-          if (spinnerTimer !== null) clearInterval(spinnerTimer)
-          spinnerTimer = null
-
-          if (state.pendingMarkJump !== null) {
-            state = reduce(state, { type: 'cancel-pending-mark-jump' })
-          }
-
-          process.stdout.write(render(state))
-        })
-
-        return
       }
     }
 

@@ -1,4 +1,4 @@
-import type { Commit, FileStat } from './git.js'
+import type { Commit } from './git.js'
 
 export function wordWrap(text: string, maxLen: number): string[] {
   if (text.length === 0) return ['']
@@ -167,7 +167,6 @@ export type SearchState = {
   expandedMatches: ExpandedMatch[]
   activeIndex: number
   highlightsVisible: boolean
-  loadingAll: boolean
   searchBody: boolean
   bodyMatchIndices: Set<number>
   searchFiles: boolean
@@ -188,8 +187,6 @@ export type UiState = {
   expandedIndex: number | null
   termHeight: number
   termWidth: number
-  hasMore: boolean
-  totalCommits: number
   branchTips: Map<string, string[]>
   branchColWidth: number
   unpushedShas: Set<string>
@@ -200,8 +197,6 @@ export type UiState = {
   marks: Record<string, string>
   jumpStack: number[]
   jumpForwardStack: number[]
-  pendingMarkJump: string | null
-  loadingMore: boolean
   search: SearchState
 }
 
@@ -228,8 +223,7 @@ export type Action =
   | { type: 'quit' }
   | { type: 'hard-quit' }
   | { type: 'resize'; height: number; width: number }
-  | { type: 'commits-loaded'; commits: Commit[]; total: number; hasMore: boolean }
-  | { type: 'detail-loaded'; index: number; body: string; files: FileStat[] }
+  | { type: 'numstat-loaded'; index: number; numstat: Map<string, { added: number; deleted: number }> }
   | { type: 'set-mark'; letter: string }
   | { type: 'jump-to-mark'; letter: string }
   | { type: 'jump-previous' }
@@ -244,15 +238,9 @@ export type Action =
   | { type: 'search-next' }
   | { type: 'search-prev' }
   | { type: 'search-clear-highlights' }
-  | { type: 'search-load-complete' }
-  | { type: 'resolve-pending-mark-jump' }
-  | { type: 'cancel-pending-mark-jump' }
-  | { type: 'needs-load-more' }
 
 export function createInitialState(
   commits: Commit[],
-  totalCommits: number,
-  hasMore: boolean,
   termHeight: number,
   termWidth: number,
   branchTips: Map<string, string[]>,
@@ -267,8 +255,6 @@ export function createInitialState(
     expandedIndex: null,
     termHeight: termHeight - 1,
     termWidth,
-    hasMore,
-    totalCommits,
     branchTips,
     branchColWidth,
     unpushedShas,
@@ -279,8 +265,6 @@ export function createInitialState(
     marks: {},
     jumpStack: [],
     jumpForwardStack: [],
-    pendingMarkJump: null,
-    loadingMore: false,
     search: emptySearch(),
   }
 }
@@ -296,7 +280,6 @@ function emptySearch(): SearchState {
     expandedMatches: [],
     activeIndex: -1,
     highlightsVisible: true,
-    loadingAll: false,
     searchBody: false,
     bodyMatchIndices: new Set(),
     searchFiles: false,
@@ -371,10 +354,8 @@ export function reduce(state: UiState, action: Action): UiState {
       return state
     case 'resize':
       return resize(state, action.height, action.width)
-    case 'commits-loaded':
-      return commitsLoaded(state, action.commits, action.total, action.hasMore)
-    case 'detail-loaded':
-      return detailLoaded(state, action.index, action.body, action.files)
+    case 'numstat-loaded':
+      return numstatLoaded(state, action.index, action.numstat)
     case 'search-start':
       return searchStart(state, action.direction)
     case 'search-input':
@@ -389,17 +370,6 @@ export function reduce(state: UiState, action: Action): UiState {
       return searchPrev(state)
     case 'search-clear-highlights':
       return searchClearHighlights(state)
-    case 'search-load-complete':
-      return searchLoadComplete(state)
-    case 'resolve-pending-mark-jump':
-      return resolvePendingMarkJump(state)
-    case 'cancel-pending-mark-jump':
-      return cancelPendingMarkJump(state)
-    case 'needs-load-more':
-      if (state.hasMore && !state.loadingMore) {
-        return { ...state, loadingMore: true }
-      }
-      return state
   }
 }
 
@@ -446,9 +416,6 @@ function moveDown(state: UiState): UiState {
   }
 
   if (state.cursorIndex >= state.commits.length - 1) {
-    if (state.hasMore && !state.loadingMore) {
-      return { ...state, loadingMore: true }
-    }
     return state
   }
 
@@ -506,19 +473,6 @@ function pageDown(state: UiState): UiState {
   const newOffset = pageDownNewOffset(state)
   const newCursor = newOffset >= maxIndex ? maxIndex : Math.min(newOffset, maxIndex)
 
-  if (newCursor === maxIndex && state.hasMore && !state.loadingMore) {
-    const keepExpanded = state.expandedIndex === newCursor
-
-    return clearSelections({
-      ...state,
-      cursorIndex: newCursor,
-      scrollOffset: newOffset,
-      expandedIndex: keepExpanded ? state.expandedIndex : null,
-      search: preserveListSearch(state.search),
-      loadingMore: true,
-    })
-  }
-
   const keepExpanded = state.expandedIndex === newCursor
 
   return clearSelections({
@@ -567,9 +521,6 @@ function jumpTop(state: UiState): UiState {
 function jumpBottom(state: UiState): UiState {
   const newCursor = state.commits.length - 1
   if (state.cursorIndex === newCursor && state.fileCursorIndex === null) {
-    if (state.hasMore && !state.loadingMore) {
-      return { ...state, loadingMore: true }
-    }
     return state
   }
 
@@ -590,9 +541,6 @@ function jumpBottom(state: UiState): UiState {
 function jumpLine(state: UiState, line: number): UiState {
   const newCursor = Math.max(0, Math.min(line - 1, state.commits.length - 1))
   if (state.cursorIndex === newCursor && state.fileCursorIndex === null) {
-    if (line - 1 >= state.commits.length && state.hasMore && !state.loadingMore) {
-      return { ...state, loadingMore: true }
-    }
     return state
   }
 
@@ -732,7 +680,7 @@ function enterFileCursor(state: UiState): UiState {
   }
 
   const commitToExpand = state.commits[state.cursorIndex]
-  const alreadyLoaded = commitToExpand?.files != null && commitToExpand.files.length > 0
+  const alreadyLoaded = commitToExpand !== undefined && commitToExpand.files.length > 0
 
   const base: UiState = {
     ...state,
@@ -794,35 +742,25 @@ function exitFileCursor(state: UiState): UiState {
   return state
 }
 
-function commitsLoaded(
-  state: UiState,
-  newCommits: Commit[],
-  total: number,
-  hasMore: boolean,
-): UiState {
-  const commits = [...state.commits, ...newCommits]
-  const branchColWidth = computeBranchColWidth(state.branchTips, commits)
-
-  return {
-    ...state,
-    commits,
-    totalCommits: total,
-    hasMore,
-    branchColWidth,
-  }
-}
-
-function detailLoaded(
+function numstatLoaded(
   state: UiState,
   index: number,
-  body: string,
-  files: FileStat[],
+  numstat: Map<string, { added: number; deleted: number }>,
 ): UiState {
   const commits = state.commits.map((commit, i) => {
     if (i !== index) {
       return commit
     }
-    return { ...commit, body, files }
+
+    const updatedFiles = commit.files.map((f) => {
+      const stat = numstat.get(f.path)
+      if (stat !== undefined) {
+        return { ...f, added: stat.added, deleted: stat.deleted }
+      }
+      return f
+    })
+
+    return { ...commit, files: updatedFiles, numstatLoaded: true }
   })
 
   return { ...state, commits }
@@ -1023,15 +961,6 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
   const maxIndex = raw.commits.length - 1
   const newCursor = Math.max(0, Math.min(maxIndex, raw.cursorIndex + delta))
 
-  if (direction === 'down' && raw.cursorIndex + delta > maxIndex && raw.hasMore && !raw.loadingMore) {
-    return {
-      ...raw,
-      cursorIndex: maxIndex,
-      scrollOffset: scrollToTarget(raw, maxIndex),
-      loadingMore: true,
-    }
-  }
-
   const newOffset = clampScrollOffset(raw, newCursor)
 
   return {
@@ -1079,11 +1008,7 @@ function jumpToMasterMark(state: UiState): UiState {
   if (targetSha === null) return state
 
   const targetIndex = state.commits.findIndex((c) => c.shortSha === targetSha)
-  if (targetIndex === -1) {
-    return { ...state, pendingMarkJump: targetSha }
-  }
-
-  if (targetIndex === state.cursorIndex) return state
+  if (targetIndex === -1 || targetIndex === state.cursorIndex) return state
 
   return applyJump(state, targetIndex)
 }
@@ -1162,21 +1087,19 @@ function findFlagDelimiter(query: string): { delimiter: string; index: number } 
   return null
 }
 
-export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchAll: boolean; searchBody: boolean; searchFiles: boolean; flagError: string | null } {
+export function parseCaseFlags(query: string): { pattern: string; ignoreCase: boolean; searchBody: boolean; searchFiles: boolean; flagError: string | null } {
   let ignoreCase: boolean | null = null
-  let searchAll = false
   let searchBody = false
   let searchFiles = false
   let flagError: string | null = null
   let searchPart = query
 
-  const validFlags = ['!', 'b', '!b', 'b!', 'f', '!f', 'f!']
+  const validFlags = ['b', 'f']
 
   const delim = findFlagDelimiter(query)
   if (delim !== null && delim.index > 0) {
     const flagPart = query.slice(delim.index + 1)
     if (validFlags.includes(flagPart)) {
-      searchAll = flagPart.includes('!')
       searchBody = flagPart.includes('b')
       searchFiles = flagPart.includes('f')
       searchPart = query.slice(0, delim.index)
@@ -1204,7 +1127,7 @@ export function parseCaseFlags(query: string): { pattern: string; ignoreCase: bo
     ignoreCase = searchPart === searchPart.toLowerCase()
   }
 
-  return { pattern: searchPart, ignoreCase, searchAll, searchBody, searchFiles, flagError }
+  return { pattern: searchPart, ignoreCase, searchBody, searchFiles, flagError }
 }
 
 function matchesText(text: string, pattern: string, ignoreCase: boolean): boolean {
@@ -1234,13 +1157,11 @@ function computeListMatches(
 
     if (searchFiles) {
       let fileMatch = false
-      if (commit.files !== null) {
-        for (let fi = 0; fi < commit.files.length; fi++) {
-          const file = commit.files[fi]
-          if (file !== undefined && matchesText(file.path, pattern, ignoreCase)) {
-            fileMatch = true
-            break
-          }
+      for (let fi = 0; fi < commit.files.length; fi++) {
+        const file = commit.files[fi]
+        if (file !== undefined && matchesText(file.path, pattern, ignoreCase)) {
+          fileMatch = true
+          break
         }
       }
 
@@ -1307,12 +1228,10 @@ function computeExpandedMatches(
     }
   }
 
-  if (commit.files !== null) {
-    for (let i = 0; i < commit.files.length; i++) {
-      const file = commit.files[i]
-      if (file !== undefined && matchesText(file.path, pattern, ignoreCase)) {
-        result.push({ type: 'file', index: i })
-      }
+  for (let i = 0; i < commit.files.length; i++) {
+    const file = commit.files[i]
+    if (file !== undefined && matchesText(file.path, pattern, ignoreCase)) {
+      result.push({ type: 'file', index: i })
     }
   }
 
@@ -1372,7 +1291,6 @@ function searchStart(state: UiState, direction: 'forward' | 'backward'): UiState
       inputMode: true,
       direction,
       prompt: '',
-      loadingAll: false,
     },
   }
 }
@@ -1437,7 +1355,6 @@ function navigateToBodyMatch(
       activeIndex,
       inputMode: false,
       highlightsVisible: true,
-      loadingAll: false,
     },
     ...withJump(state),
   }
@@ -1476,7 +1393,6 @@ function navigateToFileMatch(
       activeIndex,
       inputMode: false,
       highlightsVisible: true,
-      loadingAll: false,
     },
     ...withJump(state),
   }
@@ -1489,26 +1405,11 @@ function searchConfirm(state: UiState): UiState {
     return { ...state, search: { ...emptySearch() } }
   }
 
-  const { searchAll, searchBody, searchFiles, flagError } = parseCaseFlags(s.prompt)
+  const { searchBody, searchFiles, flagError } = parseCaseFlags(s.prompt)
   if (flagError) {
     return { ...state, search: { ...s, flagError } }
   }
   const query = s.prompt
-
-  if (s.scope === 'list' && searchAll && state.hasMore) {
-    return {
-      ...state,
-      search: {
-        ...s,
-        query,
-        searchBody,
-        searchFiles,
-        inputMode: false,
-        highlightsVisible: true,
-        loadingAll: true,
-      },
-    }
-  }
 
   const { pattern, ignoreCase } = parseCaseFlags(query)
 
@@ -1926,58 +1827,6 @@ function searchClearHighlights(state: UiState): UiState {
   }
 }
 
-function searchLoadComplete(state: UiState): UiState {
-  const s = state.search
-
-  if (s.query === null) return state
-
-  const { pattern, ignoreCase } = parseCaseFlags(s.query)
-  const { matches, bodyMatchIndices, fileMatchIndices } = computeListMatches(state.commits, pattern, ignoreCase, state.branchTips, s.searchBody, s.searchFiles)
-
-  const totals = (s.searchBody || s.searchFiles)
-    ? computeExpandedMatchTotals(state.commits, matches, bodyMatchIndices, fileMatchIndices, pattern, ignoreCase)
-    : { expandedMatchCounts: new Map<number, number>(), totalMatchCount: matches.length }
-
-  if (matches.length > 0) {
-    const activeIndex = resolveListActiveIndex(matches, state.cursorIndex, s.direction)
-    const targetIndex = matches[activeIndex]
-
-    if (targetIndex !== undefined) {
-      if (s.searchBody && bodyMatchIndices.has(targetIndex)) {
-        return navigateToBodyMatch(
-          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
-          targetIndex, s, s.query, s.searchBody, pattern, ignoreCase,
-        )
-      }
-
-      if (s.searchFiles && fileMatchIndices.has(targetIndex)) {
-        return navigateToFileMatch(
-          { ...state, search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount } },
-          targetIndex, s, s.query, s.searchFiles, pattern, ignoreCase,
-        )
-      }
-
-      const newOffset = targetIndex < state.scrollOffset || targetIndex >= state.scrollOffset + state.termHeight
-        ? targetIndex
-        : state.scrollOffset
-
-      return {
-        ...state,
-        cursorIndex: targetIndex,
-        scrollOffset: newOffset,
-        expandedIndex: null,
-        search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex, highlightsVisible: true, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
-        ...withJump(state),
-      }
-    }
-  }
-
-  return {
-    ...state,
-    search: { ...s, listMatches: matches, bodyMatchIndices, fileMatchIndices, activeIndex: -1, highlightsVisible: true, loadingAll: false, expandedMatchCounts: totals.expandedMatchCounts, totalMatchCount: totals.totalMatchCount },
-  }
-}
-
 function resolveListActiveIndex(
   matches: number[],
   cursorIndex: number,
@@ -2111,22 +1960,6 @@ function jumpToBranchPrev(state: UiState): UiState {
     }
   }
   return state
-}
-
-function resolvePendingMarkJump(state: UiState): UiState {
-  const targetSha = state.pendingMarkJump
-  if (targetSha === null) return state
-
-  const targetIndex = state.commits.findIndex((c) => c.shortSha === targetSha)
-  if (targetIndex === -1) return { ...state, pendingMarkJump: null }
-
-  return applyJump({ ...state, pendingMarkJump: null }, targetIndex)
-}
-
-function cancelPendingMarkJump(state: UiState): UiState {
-  if (state.pendingMarkJump === null) return state
-
-  return { ...state, pendingMarkJump: null }
 }
 
 function applyJump(state: UiState, targetIndex: number): UiState {
