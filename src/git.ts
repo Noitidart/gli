@@ -144,7 +144,9 @@ export async function getAllCommits(pathspecs?: string[]): Promise<Commit[]> {
 
     if (commits.length > 0 && statusLines.length > 0) {
       const prev = commits[commits.length - 1]!
-      commits[commits.length - 1] = { ...prev, files: parseNameStatusLines(statusLines) }
+      const files = parseNameStatusLines(statusLines)
+      files.sort((a, b) => a.path.localeCompare(b.path))
+      commits[commits.length - 1] = { ...prev, files }
     }
 
     const cleaned = rest.startsWith('\n') ? rest.slice(1) : rest

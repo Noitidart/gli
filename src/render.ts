@@ -353,10 +353,6 @@ function renderExpandedCommit(
       (max, f) => Math.max(max, f.status.length), 0,
     )
 
-    const sortedIndices = commit.files
-      .map((f, i) => ({ path: f.path, index: i }))
-      .sort((a, b) => a.path.localeCompare(b.path))
-
     const hasNumstat = commit.files.some(
       f => f.added !== null && f.deleted !== null,
     )
@@ -366,7 +362,7 @@ function renderExpandedCommit(
         ) + 2
       : 0
 
-    for (const { index: i } of sortedIndices) {
+    for (let i = 0; i < commit.files.length; i++) {
       const file = commit.files[i]
       if (file === undefined) {
         continue
