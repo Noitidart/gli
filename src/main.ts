@@ -85,7 +85,7 @@ CURSOR CONTEXTS
   k     Prev commit              Collapse + prev commit    Subject                  Prev file
   h     Nothing                  Fold                      Subject                  Exit to subject
                                                                                     (2nd press folds)
-  l     Expand + cursor          Enter file cursor         First file               Nothing
+  l     Expand + cursor          Enter file cursor         First file               Skip to next commit
         to 1st file
 
   All support count prefix (3j, 5k).

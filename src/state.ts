@@ -721,7 +721,17 @@ function enterFileCursor(state: UiState): UiState {
 
   if (state.expandedIndex === state.cursorIndex) {
     if (state.fileCursorIndex !== null) {
-      return state
+      const collapsed = clearSelections({
+        ...state,
+        expandedIndex: null,
+        fileCursorIndex: null,
+        search: preserveListSearch(state.search),
+      })
+      const maxIndex = collapsed.commits.length - 1
+      const newCursor = Math.min(collapsed.cursorIndex + 1, maxIndex)
+      const newOffset = clampScrollOffset(collapsed, newCursor)
+
+      return { ...collapsed, cursorIndex: newCursor, scrollOffset: newOffset }
     }
 
     const expandedCommit = state.commits[state.expandedIndex]

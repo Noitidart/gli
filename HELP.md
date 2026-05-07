@@ -17,7 +17,7 @@ gli [-- <pathspec>...]
 | `j` | Next commit | Collapse + next commit | First file (or next commit if no files) | Next file |
 | `k` | Prev commit | Collapse + prev commit | Subject | Prev file |
 | `h` | Nothing | Fold | Subject | Exit to subject (2nd press folds) |
-| `l` | Expand + cursor to 1st file | Enter file cursor | First file | Nothing |
+| `l` | Expand + cursor to 1st file | Enter file cursor | First file | Skip to next commit |
 
 All support count prefix (`3j`, `5k`).
 
