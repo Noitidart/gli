@@ -361,6 +361,11 @@ function renderExpandedCommit(
           (max, f) => Math.max(max, maxStatusWidth + 2 + f.path.length), 0,
         ) + 2
       : 0
+    const maxAddedLen = hasNumstat
+      ? commit.files.reduce(
+          (max, f) => Math.max(max, String(f.added ?? 0).length), 0,
+        )
+      : 0
 
     for (let i = 0; i < commit.files.length; i++) {
       const file = commit.files[i]
@@ -373,7 +378,7 @@ function renderExpandedCommit(
       const filePath = file.path
       const pathEnd = maxStatusWidth + 2 + filePath.length
       const numstatStr = file.added !== null && file.deleted !== null
-        ? ' '.repeat(Math.max(0, numstatColumn - pathEnd)) + `+${file.added} -${file.deleted}`
+        ? ' '.repeat(Math.max(0, numstatColumn - pathEnd)) + `+${String(file.added).padEnd(maxAddedLen)} -${file.deleted}`
         : ''
       const line = `${status}  ${filePath}${numstatStr}`
 
