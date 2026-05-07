@@ -709,12 +709,33 @@ function resize(state: UiState, height: number, width: number): UiState {
   }
 }
 
+function ensureFileCursorVisible(state: UiState): UiState {
+  if (state.fileCursorIndex === null || state.expandedIndex === null) return state
+
+  const totalExpandedHeight = displayHeight(state, state.expandedIndex)
+  const numFiles = state.commits[state.expandedIndex]?.files.length ?? 0
+  const fileAreaStart = totalExpandedHeight - numFiles
+  const fileVisualLine = fileAreaStart + state.fileCursorIndex
+
+  let linesBefore = 0
+  for (let i = state.scrollOffset; i < state.expandedIndex; i++) {
+    linesBefore += displayHeight(state, i)
+  }
+  const available = state.termHeight - linesBefore
+
+  if (fileVisualLine >= available && linesBefore > 0) {
+    return { ...state, scrollOffset: state.expandedIndex }
+  }
+
+  return state
+}
+
 function enterFileCursor(state: UiState): UiState {
   if (isInNonNavigable(state)) {
     const expandedCommit = state.commits[state.expandedIndex!]
     const files = expandedCommit?.files
     if (files != null && files.length > 0) {
-      return { ...state, fileCursorIndex: 0 }
+      return ensureFileCursorVisible({ ...state, fileCursorIndex: 0 })
     }
     return state
   }
@@ -738,7 +759,7 @@ function enterFileCursor(state: UiState): UiState {
     const files = expandedCommit?.files
 
     if (files != null && files.length > 0) {
-      return { ...state, fileCursorIndex: 0 }
+      return ensureFileCursorVisible({ ...state, fileCursorIndex: 0 })
     }
 
     return state
@@ -754,7 +775,7 @@ function enterFileCursor(state: UiState): UiState {
     search: preserveListSearch(state.search),
   }
 
-  return restoreFileSearchExpanded(restoreBodySearchExpanded(adjustScrollForExpanded(base), state.cursorIndex), state.cursorIndex)
+  return restoreFileSearchExpanded(restoreBodySearchExpanded(ensureFileCursorVisible(adjustScrollForExpanded(base)), state.cursorIndex), state.cursorIndex)
 }
 
 function exitFileCursor(state: UiState): UiState {
@@ -994,28 +1015,46 @@ function moveRel(state: UiState, direction: 'down' | 'up', count: number): UiSta
 
     if (files != null && files.length > 0) {
       const delta = direction === 'down' ? count : -count
+      const targetFile = state.fileCursorIndex + delta
       const lastIndex = files.length - 1
-      const newFileCursor = Math.max(0, Math.min(lastIndex, state.fileCursorIndex + delta))
 
-      if (newFileCursor !== state.fileCursorIndex) {
-        return { ...state, fileCursorIndex: newFileCursor }
+      if (targetFile >= 0 && targetFile <= lastIndex) {
+        const newState = { ...state, fileCursorIndex: targetFile }
+
+        const totalExpandedHeight = displayHeight(state, state.expandedIndex)
+        const numFiles = files.length
+        const fileAreaStart = totalExpandedHeight - numFiles
+        const fileVisualLine = fileAreaStart + targetFile
+
+        let linesBefore = 0
+        for (let i = state.scrollOffset; i < state.expandedIndex; i++) {
+          linesBefore += displayHeight(state, i)
+        }
+        const available = state.termHeight - linesBefore
+
+        if (fileVisualLine >= available && linesBefore > 0) {
+          return { ...newState, scrollOffset: state.expandedIndex }
+        }
+
+        return newState
       }
 
-      if (direction === 'down' && state.fileCursorIndex >= lastIndex) {
-        return moveRel(
-          clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null }),
-          'down',
-          1,
-        )
+      if (direction === 'down') {
+        const stepsToLastFile = lastIndex - state.fileCursorIndex
+        const remaining = count - stepsToLastFile
+        const collapsed = clearSelections({ ...state, fileCursorIndex: null, expandedIndex: null })
+        return moveRel(collapsed, 'down', remaining)
       }
 
-      if (direction === 'up' && state.fileCursorIndex <= 0) {
-    return clearSelections({
-      ...state,
-      fileCursorIndex: null,
-      search: { ...state.search, activeIndex: -1 },
-    })
-  }
+      const stepsToFirstFile = state.fileCursorIndex
+      const remaining = count - stepsToFirstFile - 1
+      const exited = clearSelections({
+        ...state,
+        fileCursorIndex: null,
+        search: { ...state.search, activeIndex: -1 },
+      })
+      if (remaining <= 0) return exited
+      return moveRel({ ...exited, expandedIndex: null }, 'up', remaining)
     }
 
     return state

@@ -4,12 +4,32 @@ import type { Commit } from './git.js'
 
 type HighlightInfo = { pattern: string; ignoreCase: boolean }
 
+function computeNavigableDistance(state: UiState, targetIndex: number): number {
+  if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
+    const E = state.expandedIndex
+    const F = state.fileCursorIndex
+    const N = state.commits[E]?.files.length ?? 0
+
+    if (targetIndex === E) return 0
+    if (targetIndex < E) return F + 1 + (E - targetIndex)
+    return (N - F) + (targetIndex - E) - 1
+  }
+
+  return Math.abs(targetIndex - state.cursorIndex)
+}
+
 export function render(state: UiState): string {
   const lines: string[] = []
 
   const effectiveHeight = state.termHeight
-  const maxLineNum = state.scrollOffset + effectiveHeight
-  const numWidth = Math.max(3, String(maxLineNum).length)
+  let maxNum = state.scrollOffset + effectiveHeight
+  if (state.fileCursorIndex !== null && state.expandedIndex !== null) {
+    const E = state.expandedIndex
+    const F = state.fileCursorIndex
+    const N = state.commits[E]?.files.length ?? 0
+    maxNum = Math.max(maxNum, F + 1 + E, (N - F) + (state.commits.length - E) - 1)
+  }
+  const numWidth = Math.max(3, String(maxNum).length)
   const shaWidth = state.commits.reduce((max, c) => Math.max(max, c.shortSha.length), 7)
   const branchWidth = state.branchColWidth
 
@@ -38,9 +58,20 @@ export function render(state: UiState): string {
       )
 
       const available = effectiveHeight - displayLine
-      const limit = Math.min(available, expandedLines.length)
 
-      for (let j = 0; j < limit; j++) {
+      let startJ = 0
+      if (displayLine === 0 && state.fileCursorIndex !== null) {
+        const numFiles = commit.files.length
+        const fileAreaStart = expandedLines.length - numFiles
+        const fileVisualLine = fileAreaStart + state.fileCursorIndex
+        if (fileVisualLine >= available) {
+          startJ = Math.max(0, fileVisualLine - available + 1)
+        }
+      }
+
+      const limit = Math.min(startJ + available, expandedLines.length)
+
+      for (let j = startJ; j < limit; j++) {
         lines.push(expandedLines[j] ?? '')
         displayLine++
       }
@@ -184,7 +215,8 @@ function renderFoldedCommit(
   termWidth: number,
 ): string[] {
   const lineNum = index + 1
-  const relNum = index === state.cursorIndex ? lineNum : Math.abs(index - state.cursorIndex)
+  const dist = computeNavigableDistance(state, index)
+  const relNum = dist === 0 ? lineNum : dist
   const relStr = String(relNum).padStart(numWidth)
   const numStr = String(lineNum).padStart(numWidth)
   const sha = commit.shortSha.padEnd(shaWidth)
